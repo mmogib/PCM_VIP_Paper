@@ -1,0 +1,6 @@
+# Ignore contents of results but keep the folder
+/results/*
+!/results/.gitkeep
+
+# Ignore archive folder and all its contents
+/archive/

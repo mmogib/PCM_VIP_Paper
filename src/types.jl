@@ -1,0 +1,23 @@
+struct Problem
+	name::String
+	Aλ::Function          # Resolvent operator
+	A::Function          # Resolvent operator
+	B::Function          # Single-valued operator
+	L::Float64          # Lipschitz constant
+	x0::Vector{Float64} # Initial point 1
+	x1::Vector{Float64} # Initial point 2
+	n::Int              # Dimension
+end
+
+@with_kw struct Solution{T}
+	solution::T
+	iterations::Int
+	time::Float64 = 0.0
+	converged::Bool = false
+	parameters::Dict{Symbol, Any}
+end
+
+Solution(sol::Solution; time::T where {T <: Real}) = Solution(
+	solution = sol.solution, iterations = sol.iterations, time = time, converged = sol.converged,
+	parameters = sol.parameters,
+)
