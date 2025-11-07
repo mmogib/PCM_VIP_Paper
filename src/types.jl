@@ -1,4 +1,4 @@
-struct Problem
+@with_kw struct Problem
 	name::String
 	Aλ::Function          # Resolvent operator
 	A::Function          # Resolvent operator
@@ -7,6 +7,9 @@ struct Problem
 	x0::Vector{Float64} # Initial point 1
 	x1::Vector{Float64} # Initial point 2
 	n::Int              # Dimension
+	dot::Function = dot
+	norm::Function = norm
+	stopping::Function = (x, tol) -> norm(x) < tol
 end
 
 @with_kw struct Solution{T}
@@ -15,9 +18,22 @@ end
 	time::Float64 = 0.0
 	converged::Bool = false
 	parameters::Dict{Symbol, Any}
+	messages::Vector{String} = ["nothing"]
 end
 
-Solution(sol::Solution; time::T where {T <: Real}) = Solution(
-	solution = sol.solution, iterations = sol.iterations, time = time, converged = sol.converged,
-	parameters = sol.parameters,
-)
+# Solution(sol::Solution; time::T where {T <: Real}) = Solution(
+# 	solution = sol.solution, iterations = sol.iterations, time = time, converged = sol.converged,
+# 	parameters = sol.parameters,
+# )
+
+
+# struct L2Problem
+# 	name::String
+# 	Aλ::Function          # Resolvent operator
+# 	A::Function          # Resolvent operator
+# 	B::Function          # Single-valued operator
+# 	L::Float64          # Lipschitz constant
+# 	x0::Function # Initial point 1
+# 	x1::Function # Initial point 2
+# 	n::Int              # Dimension
+# end

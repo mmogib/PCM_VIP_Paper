@@ -20,6 +20,7 @@ struct Example2Problem
 	n_points::Int        # Number of discretization points
 end
 
+
 """
 	discretize_L2_function(f::Function, grid::Vector{Float64})
 
@@ -29,31 +30,65 @@ function discretize_L2_function(f::Function, grid::Vector{Float64})
 	return [f(t) for t in grid]
 end
 
-"""
-	L2_inner_product(x::Vector, y::Vector, grid::Vector{Float64})
-
-Compute L² inner product using trapezoidal rule.
-"""
-function L2_inner_product(x::Vector, y::Vector, grid::Vector{Float64})
+function L2InnerProduct(grid::Vector{Float64})
 	n = length(grid)
 	dx = grid[2] - grid[1]  # Assuming uniform grid
+	function L2_inner_product(x::Vector, y::Vector)
+		# Trapezoidal rule
+		result = 0.5 * (x[1] * y[1] + x[end] * y[end])
+		for i in 2:n-1
+			result += x[i] * y[i]
+		end
 
-	# Trapezoidal rule
-	result = 0.5 * (x[1] * y[1] + x[end] * y[end])
-	for i in 2:n-1
-		result += x[i] * y[i]
+		return result * dx
 	end
-
-	return result * dx
 end
 
-"""
-	L2_norm(x::Vector, grid::Vector{Float64})
 
-Compute L² norm.
-"""
-function L2_norm(x::Vector, grid::Vector{Float64})
-	return sqrt(L2_inner_product(x, x, grid))
+function L2Norm(grid::Vector{Float64})
+	function L2_norm(x::Vector)
+		return sqrt(L2InnerProduct(grid)(x, x))
+	end
+end
+
+function ProjectOnC(grid::Vector{Float64})
+	l2prod = L2InnerProduct(grid)
+	# Define basis functions for projections
+	g_C(t) = 3 * t^2  # For C = {x : ⟨x, 3t²⟩ = 0}
+
+	# Discretize basis functions
+	g_C_vec = discretize_L2_function(g_C, grid)
+
+	# Precompute norms squared
+	norm_g_C_sq = l2prod(g_C_vec, g_C_vec)
+
+	function P_C(x::Vector)
+		inner_prod = l2prod(x, g_C_vec)
+		if abs(inner_prod) > 1e-12
+			return x - (inner_prod / norm_g_C_sq) * g_C_vec
+		else
+			return x
+		end
+	end
+end
+
+
+
+# Projection onto Q: P_Q(x) = x - max(0, ⟨x, g_Q⟩ + 1)/‖g_Q‖² * g_Q
+function ProjectOnQ(grid::Vector{Float64})
+	l2prod = L2InnerProduct(grid)
+	g_Q(t) = t / 3    # For Q = {x : ⟨x, t/3⟩ ≥ -1}
+	g_Q_vec = discretize_L2_function(g_Q, grid)
+	norm_g_Q_sq = l2prod(g_Q_vec, g_Q_vec)
+	function P_Q(x::Vector)
+		inner_prod = l2prod(x, g_Q_vec)
+		projection_coeff = (inner_prod + 1) / norm_g_Q_sq
+		if inner_prod < -1
+			return x - projection_coeff * g_Q_vec
+		else
+			return x
+		end
+	end
 end
 
 """
@@ -73,88 +108,83 @@ The problem is to find x ∈ C such that Ax ∈ Q, where:
 # Returns
 - `Example2Problem`: Structure containing all problem data
 """
-function setup_example2(n_points::Int = 101; seed = 123)
-	Random.seed!(seed)
+function setup_example2_wrapper(initial_points)
 
-	# Create uniform grid on [0, 1]
-	grid = range(0.0, 1.0, length = n_points) |> collect
-	dx = grid[2] - grid[1]
+	function setup_example2(n_points::Int; seed = 2025, num_of_instances = 1)
+		rng = Xoshiro(seed)
 
-	# Define basis functions for projections
-	g_C(t) = 3 * t^2  # For C = {x : ⟨x, 3t²⟩ = 0}
-	g_Q(t) = t / 3    # For Q = {x : ⟨x, t/3⟩ ≥ -1}
+		# Create uniform grid on [0, 1]
+		grid = range(0.0, 1.0, length = n_points) |> collect
 
-	# Discretize basis functions
-	g_C_vec = discretize_L2_function(g_C, grid)
-	g_Q_vec = discretize_L2_function(g_Q, grid)
+		# Projection onto C: P_C(x) = x - ⟨x, g_C⟩/‖g_C‖² * g_C
 
-	# Precompute norms squared
-	norm_g_C_sq = L2_inner_product(g_C_vec, g_C_vec, grid)
-	norm_g_Q_sq = L2_inner_product(g_Q_vec, g_Q_vec, grid)
 
-	# Projection onto C: P_C(x) = x - ⟨x, g_C⟩/‖g_C‖² * g_C
-	function P_C(x::Vector)
-		inner_prod = L2_inner_product(x, g_C_vec, grid)
-		if abs(inner_prod) > 1e-12
-			return x - (inner_prod / norm_g_C_sq) * g_C_vec
-		else
-			return copy(x)
+		# Linear operator A = I (identity)
+		A_op(x) = copy(x)
+		A_star(x) = copy(x)  # A* = A for identity
+
+		# Gradient ∇h(x) = A*(I - P_Q)Ax = (I - P_Q)x for A = I
+		function grad_h(x::Vector)
+			Ax = A_op(x)
+			return Ax - ProjectOnQ(grid)(Ax)
 		end
+
+		# Lipschitz constant L = ‖A‖² = 1 for identity operator
+		L = 1.0
+
+		# Indicator function subdiferential: ∂i_C
+		# The resolvent J^{∂i_C}_λ(x) = P_C(x) (independent of λ for normal cone)
+		function resolvent_indicator_C(x::Vector, λ::Float64)
+			return ProjectOnC(grid)(x)
+		end
+
+		l2norm = L2Norm(grid)
+		l2dot = L2InnerProduct(grid)
+		P_C = ProjectOnC(grid)
+		P_Q = ProjectOnQ(grid)
+		function compute_error_L2(x::Vector, tol::Float64)
+			# Error component 1: distance to C
+			P_C_x = P_C(x)
+			xPCx = x - P_C_x
+			error_C = 0.5 * dot(xPCx, xPCx)
+			# Error component 2: distance of Ax to Q
+			Ax = A_op(x)
+			P_Q_Ax = P_Q(Ax)
+			AxPQAx = Ax - P_Q_Ax
+			error_Q = 0.5 * dot(AxPQAx, AxPQAx)
+			return (error_C + error_Q) < tol
+		end
+
+		problems = Vector{Problem}(undef, num_of_instances * length(initial_points))
+		# x0_func(t) = generate_smooth_random(t)
+		# x1_func(t) = generate_smooth_random(t)
+		# u_func(t) = generate_smooth_random(t)
+		counter = 1
+
+		for i in 1:num_of_instances
+			for (init_name, _, x0_func, x1_func) in initial_points
+				problems[counter] = Problem(;
+					name = "Example 2 $i ($init_name)",
+					Aλ = resolvent_indicator_C,
+					A = A_op,
+					B = grad_h,
+					L = L,
+					x0 = discretize_L2_function(x0_func, grid),
+					x1 = discretize_L2_function(x1_func, grid),
+					n = n_points,
+					stopping = (x, tol) -> compute_error_L2(x, 1e-3),
+					norm = l2norm,
+					dot = l2dot,
+				)
+				counter += 1
+			end
+		end
+		return problems
 	end
-
-	# Projection onto Q: P_Q(x) = x - max(0, ⟨x, g_Q⟩ + 1)/‖g_Q‖² * g_Q
-	function P_Q(x::Vector)
-		inner_prod = L2_inner_product(x, g_Q_vec, grid)
-		projection_coeff = max(0, (inner_prod + 1) / norm_g_Q_sq)
-		return x - projection_coeff * g_Q_vec
-	end
-
-	# Linear operator A = I (identity)
-	A_op(x) = copy(x)
-	A_star(x) = copy(x)  # A* = A for identity
-
-	# Gradient ∇h(x) = A*(I - P_Q)Ax = (I - P_Q)x for A = I
-	function grad_h(x::Vector)
-		Ax = A_op(x)
-		return Ax - P_Q(Ax)
-	end
-
-	# Lipschitz constant L = ‖A‖² = 1 for identity operator
-	L = 1.0
-
-	# Indicator function subdiferential: ∂i_C
-	# The resolvent J^{∂i_C}_λ(x) = P_C(x) (independent of λ for normal cone)
-	function resolvent_indicator_C(x::Vector, λ::Float64)
-		return P_C(x)
-	end
-
-	# Generate random initial points in L²[0,1]
-	# We generate them as smooth functions to ensure they're in L²
-	function generate_smooth_random(t, seed_offset = 0)
-		Random.seed!(seed + seed_offset)
-		coeffs = randn(5)  # 5 random coefficients
-		return sum(coeffs[i] * sin((i - 1) * π * t) for i in 1:5) / 5
-	end
-
-	x0_func(t) = generate_smooth_random(t, 1)
-	x1_func(t) = generate_smooth_random(t, 2)
-	u_func(t) = generate_smooth_random(t, 3)
-
-	return Example2Problem(
-		resolvent_indicator_C,
-		grad_h,
-		P_C,
-		P_Q,
-		A_op,
-		A_star,
-		L,
-		x0_func,
-		x1_func,
-		u_func,
-		collect(grid),
-		n_points,
-	)
 end
+
+
+
 
 """
 	solve_problem_L2(algorithm, problem::Example2Problem, params::NamedTuple; 
@@ -208,23 +238,7 @@ function solve_problem_L2(algorithm, problem::Example2Problem, params::NamedTupl
 	return x, iter, converged, elapsed_time
 end
 
-"""
-	compute_error_L2(x::Vector, problem::Example2Problem)
 
-Compute error for SFP: E = (1/2)||x - P_C(x)||²_{L²} + (1/2)||Ax - P_Q(Ax)||²_{L²}
-"""
-function compute_error_L2(x::Vector, problem::Example2Problem)
-	# Error component 1: distance to C
-	P_C_x = problem.P_C(x)
-	error_C = 0.5 * L2_norm(x - P_C_x, problem.grid)^2
-
-	# Error component 2: distance of Ax to Q
-	Ax = problem.A_op(x)
-	P_Q_Ax = problem.P_Q(Ax)
-	error_Q = 0.5 * L2_norm(Ax - P_Q_Ax, problem.grid)^2
-
-	return error_C + error_Q
-end
 
 """
 	get_DeyHICPP_params_L2(L::Float64)
@@ -233,17 +247,56 @@ Get default parameters for DeyHICPP algorithm for Example 2.
 """
 function get_DeyHICPP_params_L2(L::Float64)
 	λ_constant = 0.01  # As specified in the paper (page 21)
-
+	β_seq = n -> 1.0 / sqrt(n + 1)
 	return (
 		γ = 0.01,  # As specified for Example 2
 		λ_seq = n -> λ_constant,
 		α = 0.5,
-		τ_seq = n -> 1.0 / sqrt(n + 1),  # Modified for Example 2
-		β_seq = n -> 1.0 / sqrt(n + 1),
-		θ_seq = n -> 0.8 - 1.0 / sqrt(n + 1),
+		τ_seq = n -> 1.0 / n^2,  # Modified for Example 2
+		β_seq,
+		θ_seq = n -> 0.8 - β_seq(n),
 	)
 end
 
+
+function get_IPCMAS1_params_L2(L::Float64; γ = 0.01, μ0 = 0.5, α0 = 0.5, β0 = 0.5, λ0 = 0.5)
+
+	μ = μ0
+	λ1 = isnothing(λ0) ? 1.0 / (2 * L) : λ0 #  # Constant step size
+	α_fixed = α0
+	# rng = Xoshiro(2025)
+	# U = Uniform(0, (1 - 3α_fixed) / (3 * (1 - α_fixed)))
+
+	β = β0 #rand(rng, U)
+	aseq() = begin
+		prefix = Float64[0.0]   # prefix[k+1] stores sum_{i=1}^k 1/i^2
+		function (n::Int)
+			n ≥ 1 || throw(ArgumentError("n must be ≥ 0"))
+			while length(prefix) - 1 < n
+				k = length(prefix)          # next i to add
+				push!(prefix, prefix[end] + 1.0 / (k^2))
+			end
+			return prefix[n+1]
+		end
+	end
+
+	β_seq(n) = 1.0 / (5 * n + 1)
+	α_seq(n) = 0.8 - β_seq(n)
+	# α_seq(n) = α_fixed #  0.8 - β_seq(n)
+	a_seq(n) = 100 / (n)^(2) #aseq()
+	# ι_seq = n -> 1.0 / n^2
+
+	return (
+		γ = γ,
+		μ = μ,
+		λ1 = λ1,
+		β = β,
+		α = α_fixed,
+		β_seq = β_seq,
+		α_seq = α_seq,
+		a_seq = a_seq,
+	)
+end
 """
 	generate_table3(algorithms::Vector, 
 				   algorithm_names::Vector{String};
@@ -443,7 +496,7 @@ function test_example2_single_run(algorithm, param_getter;
 	println("  Iterations: $iter")
 	println("  Time: $(round(time, digits=4)) seconds")
 	println("  Final error: $(round(final_error, digits=6))")
-	println("  Solution L² norm: $(round(L2_norm(x, problem.grid), digits=6))")
+	println("  Solution L² norm: $(round(l2norm(problem.grid)(x), digits=6))")
 	println("="^70)
 
 	return x, iter, converged, time
@@ -453,12 +506,12 @@ end
 # Example usage
 # ============================================================================
 
-println("\n" * "="^70)
-println("Example 2: Split Feasibility Problem in L²[0,1]")
-println("="^70)
+# println("\n" * "="^70)
+# println("Example 2: Split Feasibility Problem in L²[0,1]")
+# println("="^70)
 
 # Test single run
-test_example2_single_run(DeyHICPP, get_DeyHICPP_params_L2, choice = 1, tol = 1e-3)
+# test_example2_single_run(DeyHICPP, get_DeyHICPP_params_L2, choice = 1, tol = 1e-3)
 
 # # Generate full Table 3
 # algorithms = [
@@ -469,49 +522,126 @@ test_example2_single_run(DeyHICPP, get_DeyHICPP_params_L2, choice = 1, tol = 1e-
 # 	"DeyHICPP",
 # ]
 
+# algorithms = [
+# 	(DeyHICPP, get_DeyHICPP_params),
+# 	(IPCMAS1, get_IPCMAS1_params),
+# 	(IPCMAS2, get_IPCMAS2_params),
+# 	# Add more algorithms here as we implement them:
+# 	# (Algorithm_1_15, get_Algorithm_1_15_params),
+# 	# (Algorithm_1_17, get_Algorithm_1_17_params),
+# ]
+
+# algorithm_names = [
+# 	"DeyHICPP",
+# 	"IPCMAS1",
+# 	"IPCMAS2",
+# 	# "Algo (1.15)",
+# 	# "Algo (1.17)",
+# ]
+
+# results_table3 = generate_table3(
+# 	algorithms,
+# 	algorithm_names;
+# 	n_points = 101,
+# 	tol = 1e-3,
+# 	maxiter = 10000,
+# 	verbose = any(x -> x in ("--verbose", "-v"), ARGS),
+# 	show_progress = !any(x -> x == "--no-progress", ARGS),
+# )
+
+# # Save results
+# function save_table3_results(results::Dict, filename::String)
+# 	data = []
+# 	header = ["Choice", "Algorithm", "Time", "Iterations", "Converged", "Final_Error"]
+
+# 	for algo_name in keys(results)
+# 		for r in results[algo_name]
+# 			push!(data, [r.choice, algo_name, r.time, r.iter, r.converged, r.error])
+# 		end
+# 	end
+
+# 	writedlm(filename, vcat([header], data), ',')
+# 	println("\nTable 3 results saved to $filename")
+# end
+
+# save_table3_results(results_table3, "results/table3_results_2.csv")
+
+# # Convert to Excel
+# csv_to_xlsx("results/table3_results.csv", "results/table3_results_2.xlsx", sheet_name = "SFP_L2", overwrite = true)
+
+
+
+opts, pos = parse_args(ARGS)
+title = "example 2"
+initial_points =
+	[
+		("case 1", t -> 15 * t^3 + exp(t / 22), t -> t^3 * exp(t / 211) + 5 * t, t -> sin(t) + t^6),
+		("case 2", t -> exp(t), t -> t * exp(t^3), t -> cos(t)),
+		("case 3", t -> t + 1, t -> 3 * t^2 + t, t -> t^2 * exp(t)),
+		("case 4", t -> 11 * sin(t), t -> 5 * t^2, t -> exp(t / 2)),
+	]
 algorithms = [
-	(DeyHICPP, get_DeyHICPP_params),
-	(IPCMAS1, get_IPCMAS1_params),
-	(IPCMAS2, get_IPCMAS2_params),
-	# Add more algorithms here as we implement them:
-	# (Algorithm_1_15, get_Algorithm_1_15_params),
-	# (Algorithm_1_17, get_Algorithm_1_17_params),
+	("DeyHICPP", DeyHICPP, get_DeyHICPP_params_L2),
+	("IPCMAS1(λ1=1/2L, γ = 0.01)", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ = 0.01, μ0 = 0.5, α0 = 0.5, β0 = 0.5, λ0 = 0.05)),
+	("IPCMAS1(λ1=1/2L, γ = 0.1)", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ = 0.1, μ0 = 0.5, α0 = 0.5, β0 = 0.5, λ0 = 0.05)),
+	("IPCMAS1(λ1=1/2L, γ = 1.1)", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ = 1.1, μ0 = 0.5, α0 = 0.5, β0 = 0.5, λ0 = 0.05)),
+	# ("IPCMAS1(λ1=0.1, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 0.1)),
+	# ("IPCMAS1(λ1=1, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 1.0))
 ]
 
-algorithm_names = [
-	"DeyHICPP",
-	"IPCMAS1",
-	"IPCMAS2",
-	# "Algo (1.15)",
-	# "Algo (1.17)",
-]
+errors = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
+dims = [100]
+maxiter = parse(Int, get(opts, "maxiter", get(opts, "itr", "50000")))
+seed = 2025
+num_of_instances = 1
+verbose = any(x -> x in ("--verbose", "-v"), ARGS)
+show_progress = !any(x -> x == "--no-progress", ARGS)
+clearfolder = any(x -> x in ("--clear", "-c"), ARGS)
 
-results_table3 = generate_table3(
-	algorithms,
-	algorithm_names;
-	n_points = 101,
-	tol = 1e-3,
-	maxiter = 10000,
-	verbose = any(x -> x in ("--verbose", "-v"), ARGS),
-	show_progress = !any(x -> x == "--no-progress", ARGS),
+
+
+csv_file = startSolvingExample(title, algorithms, setup_example2_wrapper(initial_points), dims;
+	errors = errors,
+	seed = seed,
+	num_of_instances = num_of_instances,
+	maxiter = maxiter,
+	verbose = verbose,
+	show_progress = show_progress,
+	clearfolder = clearfolder,
 )
 
-# Save results
-function save_table3_results(results::Dict, filename::String)
-	data = []
-	header = ["Choice", "Algorithm", "Time", "Iterations", "Converged", "Final_Error"]
+# csv_file = find_newest_csv("results/example1", "comparison_all")
 
-	for algo_name in keys(results)
-		for r in results[algo_name]
-			push!(data, [r.choice, algo_name, r.time, r.iter, r.converged, r.error])
-		end
-	end
 
-	writedlm(filename, vcat([header], data), ',')
-	println("\nTable 3 results saved to $filename")
-end
 
-save_table3_results(results_table3, "results/table3_results_2.csv")
+title = replace(title, " " => "_")
+plotProfiles(title, csv_file, "Time")
+plotProfiles(title, csv_file, "Iter")
+# n_points = 1000
+# grid = range(0.0, 1.0, length = n_points) |> collect
+# p_C = ProjectOnC(grid)
+# p_Q = ProjectOnQ(grid)
 
-# Convert to Excel
-csv_to_xlsx("results/table3_results.csv", "results/table3_results_2.xlsx", sheet_name = "SFP_L2", overwrite = true)
+# f1, f2, f3 = sin, t -> 3t^2, t -> t / 3
+# f1_dis = discretize_L2_function(f1, grid)
+# f2_dis = discretize_L2_function(f2, grid)
+# f3_dis = discretize_L2_function(f3, grid)
+# val_f1_f2_A1 = L2InnerProduct(grid)(p_C(f1_dis), f2_dis)
+# val_f1_f2_A2 = L2InnerProduct(grid)(p_Q(p_C(f1_dis)), f3_dis)
+
+# val_f1_f2_B1 = L2InnerProduct(ProjectOnC(f1), f2)
+# val_f1_f2_B2 = L2InnerProduct(ProjectOnQ(ProjectOnC(f1)), f3)
+
+# printstyled(val_f1_f2_A1, color = :red)
+# println()
+# print("=="^75)
+# println()
+# printstyled(val_f1_f2_B1, color = :blue)
+# println()
+# print("=="^75)
+# println()
+# printstyled(val_f1_f2_A2, color = :red)
+# println()
+# print("=="^75)
+# println()
+# printstyled(val_f1_f2_B2, color = :blue)

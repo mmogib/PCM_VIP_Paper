@@ -37,11 +37,14 @@ function get_IPCMAS1_params(L::Float64; μ0 = 0.5, α0 = 0.25, β0 = 0.0001, λ0
 	)
 end
 
-function IPCMAS1(A, B, x0, x1;
+function IPCMAS1(problem::Problem;
 	γ = 1.8, μ = 0.5, λ1 = 0.25, α = 0.3, β = 0.1,
 	β_seq = n -> 0.5, α_seq = n -> 0.3, a_seq = n -> 0.0,
 	tol = 1e-6, maxiter = 10000)::Solution
 
+	Aresolvant, B, x0, x1, name = problem.Aλ, problem.B, problem.x0, problem.x1, problem.name
+	dot, norm = problem.dot, problem.norm
+	stopping_criterion = problem.stopping
 	# Validate parameters
 	@assert 0 < γ < 2 "γ must be in (0,2)"
 	@assert 0 < μ < 1 "μ must be in (0,1)"
@@ -55,13 +58,13 @@ function IPCMAS1(A, B, x0, x1;
 	converged = false
 	# Resolvent operator J^A_λ
 	# This should be provided based on the specific operator A
-	J_A(x, λ) = A(x, λ)  # This should be the resolvent of A
-
+	J_A(x, λ) = Aresolvant(x, λ)  # This should be the resolvent of A
+	messages = ["Solving problem ($name)"]
 	while n <= maxiter
 		# Get current parameters
 		β_n = β_seq(n)
-
-
+		message = "Iteration $(n) \n"
+		message *= "\t lambda = $(λ_curr)"
 		# ι_n = ι_seq(n)
 		# x_prev_x_curr_norm = norm(x_prev - x_curr)
 		θ_n = 0.9
@@ -83,9 +86,13 @@ function IPCMAS1(A, B, x0, x1;
 		y_n = J_A(w_n - λ_curr * B_wn, λ_curr)
 
 		# Check stopping criterion: if yₙ = wₙ
-		if norm(y_n - w_n) < tol
+
+		if stopping_criterion(y_n - w_n, tol)
 			converged = true
 			x_curr = y_n  # yₙ is a solution
+			message *= "\n"
+			message *= "="^50
+			push!(messages, message)
 			break
 		end
 
@@ -105,6 +112,12 @@ function IPCMAS1(A, B, x0, x1;
 		# Step 3: Compute xₙ₊₁
 		x_next = (1 - α_n - β_n) * z_n + α_n * u_n
 
+		# if stopping_criterion(x_next)
+		# 	converged = true
+		# 	x_curr = x_next
+		# 	break
+		# end
+
 		# Update λₙ₊₁
 		B_diff_norm = norm(B_wn - B_yn)
 		w_y_norm = norm(w_n - y_n)
@@ -114,6 +127,9 @@ function IPCMAS1(A, B, x0, x1;
 		else
 			λ_curr + a_n
 		end
+		message *= "\n"
+		message *= "="^50
+		push!(messages, message)
 
 		# Prepare for next iteration
 		x_prev = x_curr
@@ -121,6 +137,7 @@ function IPCMAS1(A, B, x0, x1;
 		λ_curr = λ_next
 		n += 1
 	end
+	push!(messages, "\n FINISHED $(name) \n")
 	solution = Solution{typeof(x_curr)}(
 		solution = x_curr,
 		iterations = n - 1,
@@ -130,6 +147,7 @@ function IPCMAS1(A, B, x0, x1;
 			:β_seq => β_seq, :α_seq => α_seq, :a_seq => a_seq,
 			:tol => 1e-6, :maxiter => 10000,
 		),
+		messages = messages,
 	)
 	return solution
 end
@@ -241,10 +259,14 @@ function get_DeyHICPP_params(L::Float64)
 	)
 end
 
-function DeyHICPP(Aresolvant, B, x0, x1;
+
+function DeyHICPP(problem::Problem;
 	γ = 1.5, λ_seq = n -> 0.01, α = 0.5,
 	τ_seq = n -> 1.0 / n^2, β_seq = n -> 1.0 / (5n + 1), θ_seq = n -> 0.8 - 1.0 / (5n + 1),
 	tol = 1e-6, maxiter = 10000)::Solution
+	Aresolvant, B, x0, x1, name = problem.Aλ, problem.B, problem.x0, problem.x1, problem.name
+	_dot, _norm = problem.dot, problem.norm
+	stopping_criterion = problem.stopping
 
 	# Validate parameters
 	@assert 0 < γ < 2 "γ must be in (0,2)"
@@ -255,22 +277,25 @@ function DeyHICPP(Aresolvant, B, x0, x1;
 	x_curr = copy(x1)
 	n = 1
 	converged = false
-
+	messages = ["Solving problem ($name)" * "=="^10]
 	while n <= maxiter
 		# Get current parameters
+		message = "iteration: $n \n"
 		λₙ = λ_seq(n)
+		message *= "lambda = $(λₙ)"
 		τₙ = τ_seq(n)
 		βₙ = β_seq(n)
 		θₙ = θ_seq(n)
 
 		# Step 1: Choose αₙ such that 0 ≤ αₙ ≤ ᾱₙ
-		x_diff_norm = norm(x_curr - x_prev)
+		x_diff_norm = _norm(x_curr - x_prev)
 		ᾱₙ = if x_diff_norm > eps()
 			min(α, τₙ / x_diff_norm)
 		else
 			α
 		end
 		αₙ = ᾱₙ  # We choose αₙ = ᾱₙ for best performance
+		message *= "\t alpha_n = $(αₙ)"
 
 		# Step 2: Compute wₙ and yₙ
 		wₙ = x_curr + αₙ * (x_curr - x_prev)
@@ -280,9 +305,13 @@ function DeyHICPP(Aresolvant, B, x0, x1;
 		yₙ = Aresolvant(wₙ - λₙ * B_wₙ, λₙ)
 
 		# Check stopping criterion: if yₙ = wₙ
-		if norm(yₙ - wₙ) < tol
+		if stopping_criterion(yₙ - wₙ, tol)
 			converged = true
 			x_curr = yₙ  # yₙ is a solution
+			message *= " first check (true)\n"
+			message *= "\n"
+			message *= "="^50
+			push!(messages, message)
 			break
 		end
 
@@ -291,11 +320,12 @@ function DeyHICPP(Aresolvant, B, x0, x1;
 		dₙ = wₙ - yₙ - λₙ * (B_wₙ - B_yₙ)
 
 		# Compute ηₙ
-		ηₙ = if norm(dₙ) > eps()
-			dot(wₙ - yₙ, dₙ) / (norm(dₙ)^2)
+		ηₙ = if _norm(dₙ) > eps()
+			_dot(wₙ - yₙ, dₙ) / (_norm(dₙ)^2)
 		else
 			0.0
 		end
+		message *= "\t alpha_n = $(ηₙ)"
 
 		zₙ = wₙ - γ * ηₙ * dₙ
 
@@ -305,9 +335,12 @@ function DeyHICPP(Aresolvant, B, x0, x1;
 		# Prepare for next iteration
 		x_prev = x_curr
 		x_curr = x_next
+		message *= "\n"
+		message *= "="^50
+		push!(messages, message)
 		n += 1
 	end
-
+	push!(messages, "\n FINISHED SOLVING $(name)")
 	solution = Solution{typeof(x_curr)}(
 		solution = x_curr,
 		iterations = n - 1,
@@ -317,6 +350,7 @@ function DeyHICPP(Aresolvant, B, x0, x1;
 			:τ_seq => τ_seq, :β_seq => β_seq, :θ_seq => θ_seq,
 			:tol => 1e-6, :maxiter => 10000,
 		),
+		messages = messages,
 	)
 	return solution
 end

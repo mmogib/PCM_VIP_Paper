@@ -252,8 +252,43 @@ end
 
 
 function clear_folder_recursive(path::AbstractString; clearSubfolders = false)
+	isdir(path) || return nothing
 	for f in readdir(path; join = true)
 		clearSubfolders ? rm(f; force = true, recursive = true) : (isfile(f) && rm(f; force = true))
 	end
 	return nothing
+end
+
+
+function parse_args(args::Vector{String})
+	opts = Dict{String, Any}()
+	positional = String[]
+	i = 1
+	while i ≤ length(args)
+		a = args[i]
+		if startswith(a, "--")
+			kv = a[3:end]
+			if occursin('=', kv)
+				k, v = split(kv, "=", limit = 2)
+				opts[k] = v
+			else
+				# value in next token, or boolean flag
+				if i < length(args) && !startswith(args[i+1], "-")
+					opts[kv] = args[i+1]
+					i += 1
+				else
+					opts[kv] = true
+				end
+			end
+		elseif startswith(a, "-") && length(a) > 1
+			# short flags bundle: -abc  -> a=true,b=true,c=true
+			for c in a[2:end]
+				opts[string(c)] = true
+			end
+		else
+			push!(positional, a)
+		end
+		i += 1
+	end
+	return opts, positional
 end
