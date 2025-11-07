@@ -9,4 +9,5 @@ using BenchmarkProfiles
 using ProgressMeter
 using Parameters
 using Plots
+using ColorSchemes
 # using Integrals, QuadGK

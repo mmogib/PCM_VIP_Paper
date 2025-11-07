@@ -259,8 +259,7 @@ function get_DeyHICPP_params_L2(L::Float64)
 end
 
 
-function get_IPCMAS1_params_L2(L::Float64; γ = 0.01, μ0 = 0.5, α0 = 0.5, β0 = 0.5, λ0 = 0.5)
-
+function get_IPCMAS1_params_L2(L::Float64; γ = 1.1, μ0 = 0.5, α0 = 0.5, β0 = 0.3, λ0 = 0.5)
 	μ = μ0
 	λ1 = isnothing(λ0) ? 1.0 / (2 * L) : λ0 #  # Constant step size
 	α_fixed = α0
@@ -582,15 +581,11 @@ initial_points =
 	]
 algorithms = [
 	("DeyHICPP", DeyHICPP, get_DeyHICPP_params_L2),
-	("IPCMAS1(λ1=1/2L, γ = 0.01)", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ = 0.01, μ0 = 0.5, α0 = 0.5, β0 = 0.5, λ0 = 0.05)),
-	("IPCMAS1(λ1=1/2L, γ = 0.1)", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ = 0.1, μ0 = 0.5, α0 = 0.5, β0 = 0.5, λ0 = 0.05)),
-	("IPCMAS1(λ1=1/2L, γ = 1.1)", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ = 1.1, μ0 = 0.5, α0 = 0.5, β0 = 0.5, λ0 = 0.05)),
-	# ("IPCMAS1(λ1=0.1, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 0.1)),
-	# ("IPCMAS1(λ1=1, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 1.0))
+	("IPCMAS1(λ1=1/2L, β0 = 0.3)", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ = 1.1, μ0 = 0.5, α0 = 0.5, β0 = 0.3, λ0 = 0.05)),
 ]
 
 errors = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
-dims = [100]
+dims = [1_000]
 maxiter = parse(Int, get(opts, "maxiter", get(opts, "itr", "50000")))
 seed = 2025
 num_of_instances = 1
@@ -600,7 +595,7 @@ clearfolder = any(x -> x in ("--clear", "-c"), ARGS)
 
 
 
-csv_file = startSolvingExample(title, algorithms, setup_example2_wrapper(initial_points), dims;
+csv_file, solutions = startSolvingExample(title, algorithms, setup_example2_wrapper(initial_points), dims;
 	errors = errors,
 	seed = seed,
 	num_of_instances = num_of_instances,
@@ -608,15 +603,15 @@ csv_file = startSolvingExample(title, algorithms, setup_example2_wrapper(initial
 	verbose = verbose,
 	show_progress = show_progress,
 	clearfolder = clearfolder,
+	plotit = true,
+	plot_comparizon = true,
 )
-
+println(solutions[1].solver)
 # csv_file = find_newest_csv("results/example1", "comparison_all")
 
 
 
-title = replace(title, " " => "_")
-plotProfiles(title, csv_file, "Time")
-plotProfiles(title, csv_file, "Iter")
+
 # n_points = 1000
 # grid = range(0.0, 1.0, length = n_points) |> collect
 # p_C = ProjectOnC(grid)

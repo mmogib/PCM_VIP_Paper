@@ -138,7 +138,9 @@ function IPCMAS1(problem::Problem;
 		n += 1
 	end
 	push!(messages, "\n FINISHED $(name) \n")
-	solution = Solution{typeof(x_curr)}(
+	solution = Solution{typeof(x_curr)}(;
+		solver = "IPCMAS1",
+		problem = problem,
 		solution = x_curr,
 		iterations = n - 1,
 		converged = converged,
@@ -341,7 +343,9 @@ function DeyHICPP(problem::Problem;
 		n += 1
 	end
 	push!(messages, "\n FINISHED SOLVING $(name)")
-	solution = Solution{typeof(x_curr)}(
+	solution = Solution{typeof(x_curr)}(;
+		solver = "DeyHICPP",
+		problem = problem,
 		solution = x_curr,
 		iterations = n - 1,
 		converged = converged,

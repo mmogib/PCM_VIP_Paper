@@ -13,6 +13,8 @@
 end
 
 @with_kw struct Solution{T}
+	solver::String = ""
+	problem::Problem
 	solution::T
 	iterations::Int
 	time::Float64 = 0.0

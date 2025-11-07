@@ -188,6 +188,9 @@ function performance_profile_from_csv(
 		ylabel = "Proportion of problems",
 		title = "Performance Profile — $(tag)",
 		legend = :bottomright,
+		palette = palette(ColorSchemes.seaborn_dark),
+		linestyle = :dash,
+		linewidth = 2,
 	)
 
 	display(plt)
