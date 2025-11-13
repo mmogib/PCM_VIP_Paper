@@ -606,7 +606,6 @@ csv_file, solutions = startSolvingExample(title, algorithms, setup_example2_wrap
 	plotit = true,
 	plot_comparizon = true,
 )
-println(solutions[1].solver)
 # csv_file = find_newest_csv("results/example1", "comparison_all")
 
 

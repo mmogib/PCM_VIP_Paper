@@ -9,7 +9,10 @@
 	n::Int              # Dimension
 	dot::Function = dot
 	norm::Function = norm
-	stopping::Function = (x, tol) -> norm(x) < tol
+	stopping::Function = (x, tol) -> begin
+		normx = norm(x)
+		(normx < tol, normx)
+	end
 end
 
 @with_kw struct Solution{T}
@@ -20,7 +23,7 @@ end
 	time::Float64 = 0.0
 	converged::Bool = false
 	parameters::Dict{Symbol, Any}
-	messages::Vector{String} = ["nothing"]
+	history::Dict{Symbol, Vector{<:Real}}
 end
 
 # Solution(sol::Solution; time::T where {T <: Real}) = Solution(

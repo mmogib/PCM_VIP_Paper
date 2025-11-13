@@ -29,8 +29,8 @@ function solve_problem(algorithm, problem::Problem, params::NamedTuple;
 		iterations = sol.iterations,
 		converged = sol.converged,
 		parameters = sol.parameters,
-		messages = sol.messages,
 		time = elapsed_time,
+		history = sol.history,
 	)
 end
 
@@ -105,7 +105,7 @@ function generate_comparison_table(algorithms::Vector,
 						algo_func, problem, params;
 						tol = err, maxiter = maxiter, verbose = verbose,
 					)
-					(; solution, iterations, converged, time, messages) = sol
+					(; solution, iterations, converged, time, history) = sol
 					x, iter, converged = solution, iterations, converged
 					# Store results
 					algo_name = algorithm_names[i]
@@ -120,7 +120,7 @@ function generate_comparison_table(algorithms::Vector,
 							iter = iter,
 							converged = converged,
 							lambda = get(sol.parameters, :λ1, ""),
-							messages = messages,
+							history = history,
 							full_solution = sol,
 						),
 					)
@@ -191,6 +191,7 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
 	show_progress::Bool = true, clearfolder::Bool = false,
 	plotit = true,
 	plot_comparizon = true,
+	plot_convergence = true,
 )
 
 	println("\n" * "="^70)
@@ -218,11 +219,11 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
 	end
 	# Save results
 	ex1_ns_file = prepare_filepath("results/$(title)/comparison_all.csv", dated = true)
-	ex1_messages_file = prepare_filepath("results/$(title)/messages.txt", dated = true)
+	# ex1_messages_file = prepare_filepath("results/$(title)/messages.txt", dated = true)
 	ex1_all_file = prepare_filepath("results/$(title)/all_comparisons.xlsx", dated = true)
 
 	save_comparison_results(results, ex1_ns_file)
-	writedlm(ex1_messages_file, map(x -> x[:messages], results), ',')
+	# writedlm(ex1_messages_file, map(x -> x[:messages], results), ',')
 
 	csv_to_xlsx(ex1_ns_file, ex1_all_file, overwrite = true)
 	if plotit
@@ -235,6 +236,17 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
 		plt = compare_plot(solutions[1].solution, solutions[2].solution)
 		savefig(plt, savepath)
 	end
+	if plot_convergence
+		savepath = prepare_filepath("results/$(title)/convergence_plot.png", dated = true)
+		names = map(s -> s.solver, solutions) |> unique
+		series = map(name -> begin
+				hist = filter(s -> s.solver == name, solutions) |> y -> map(x -> x.history[:err], y)
+				(name, vcat(hist...))
+			end, names)
+		plt = make_convergence_plot(series, xlabel = "k", ylabel = "error")
+		savefig(plt, savepath)
+	end
+
 	ex1_ns_file, solutions
 end
 
@@ -254,4 +266,57 @@ function compare_plot(x1::AbstractVector, x2::AbstractVector)
 	p3 = plot(t, x1 .- x2; label = "x1 - x2", lw = 2)
 
 	plot(p1, p2, p3; layout = (3, 1), legend = :topright)
+end
+
+"""
+make_convergence_plot(series; savepath=nothing)
+
+`series` :: Vector of (label::String, values::Vector{<:Real})
+
+Example:
+	series = [
+		("ALGO1", algo1),
+		("ALGO2", algo2),
+		("ALGO3", algo3),
+		("ALGO4", algo4),
+		("ALGO5", algo5),
+	]
+"""
+function make_convergence_plot(series::Vector{Tuple{String, Vector{T}}}; xlabel::String = "x", ylabel::String = "y") where {T <: Real}
+
+	# line / marker styles (cycling)
+	colors = [:blue, :red, :green, :black, :orange, :purple, :brown]
+	markers = [:circle, :utriangle, :star5, :diamond, :rect, :xcross]
+	lstyles = [:solid, :dash, :dot, :dashdot]
+	ymax = 1e0 #maximum(map(s -> maximum(s[2]), series)) + 0.1
+	plt = plot(; yscale = :log10, dpi = 300,
+		legend = :topright,
+		gridalpha = 0.3,
+		framestyle = :box)
+
+	for (i, (label, vals)) in enumerate(series)
+		k  = 0:length(vals)-1
+		mk = markers[(i-1)%length(markers)+1]
+		c  = colors[(i-1)%length(colors)+1]
+		ls = lstyles[(i-1)%length(lstyles)+1]
+		plot!(plt, k, vals;
+			color = c,
+			lw = 1.5,
+			linestyle = ls,
+			marker = mk,
+			ms = 2,
+			markevery = 30,
+			markerstrokecolor = c,
+			markerstrokewidth = 0.5,
+			alpha = 0.9,
+			label = label,
+		)
+	end
+
+	xlabel!(plt, xlabel)
+	ylabel!(plt, ylabel)
+	ylims!(plt, 1e-8, ymax)
+
+
+	return plt
 end

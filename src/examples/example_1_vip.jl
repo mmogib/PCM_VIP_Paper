@@ -38,14 +38,20 @@ end
 
 opts, pos = parse_args(ARGS)
 title = "example 1"
+# get_IPCMAS1_params:: L::Float64; γ = 1.1, μ0 = 0.5, α0 = 0.25, β0 = 0.0001, λ0::Union{Nothing, Float64} = nothing
+# get_DongIPCA_params(L::Float64;	γ::Float64 = 1.5, τ0::Union{Nothing, Float64} = nothing,α::Float64 = 0.4,	α_seq::Function = n -> (n == 1 ? 0.0 : α))
 algorithms = [
-	("DeyHICPP", DeyHICPP, get_DeyHICPP_params),
-	("IPCMAS1(λ1=1/2L, μ=0.5)", IPCMAS1, get_IPCMAS1_params),
-	("IPCMAS1(λ1=1.1920929f-7, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 1e-9)),
-	("IPCMAS1(λ1=1, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 1.0))]
+	("DeyHICPP(λ1=1/1.05L, μ=0.5)", DeyHICPP, L -> get_DeyHICPP_params(L; λ0 = 1 / (1.05 * L))),
+	("DongIPCA(λ1=1/1.05L, μ=0.5)", DongIPCA, L -> get_DongIPCA_params(L; τ0 = 1 / (1.05 * L))),
+	("IPCMAS1(λ1=1/1.05L, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 1 / (1.05 * L))),
+	# ("IPCMAS1(λ1=1e-9, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 1e-9)),
+	("IPCMAS2(λ1=1/1.05L, γ=1.1)", IPCMAS2, (L) -> get_IPCMAS2_params(L; γ = 1.1, λ0 = 1 / (1.05 * L))),
+]
 
-errors = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
-dims = [100, 150, 200, 250, 300]
+# errors = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
+errors = [1e-4]
+# dims = [100, 150, 200, 250, 300]
+dims = [200]
 seed = 2025
 num_of_instances = 1
 maxiter = parse(Int, get(opts, "maxiter", get(opts, "itr", "50000")))
@@ -55,7 +61,7 @@ clearfolder = any(x -> x in ("--clear", "-c"), ARGS)
 
 
 
-csv_file = startSolvingExample(title, algorithms, setup_example1, dims;
+csv_file, solutions = startSolvingExample(title, algorithms, setup_example1, dims;
 	errors = errors,
 	seed = seed,
 	num_of_instances = num_of_instances,
@@ -63,13 +69,11 @@ csv_file = startSolvingExample(title, algorithms, setup_example1, dims;
 	verbose = verbose,
 	show_progress = show_progress,
 	clearfolder = clearfolder,
+	plotit = false,
+	plot_comparizon = false,
+	plot_convergence = true,
 )
 
-# csv_file = find_newest_csv("results/example1", "comparison_all")
-
-title = replace(title, " " => "_")
-plotProfiles(title, csv_file, "Time")
-plotProfiles(title, csv_file, "Iter")
 
 
 
