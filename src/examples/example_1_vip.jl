@@ -70,39 +70,6 @@ csv_file, solutions = startSolvingExample(title, algorithms, setup_example1, dim
 	show_progress = show_progress,
 	clearfolder = clearfolder,
 	plotit = false,
-	plot_comparizon = false,
+	plot_comparizon = true,
 	plot_convergence = true,
 )
-
-
-
-
-# Example usage:
-"""
-# Convert single CSV to XLSX
-# csv_to_xlsx("comparison_n100.csv")
-
-# Convert with custom output name
-csv_to_xlsx("comparison_n100.csv", "results_dimension_100.xlsx")
-
-# Convert multiple CSV files to one XLSX with multiple sheets
-csv_to_xlsx_multiple(
-	["comparison_n100.csv", "comparison_n200.csv"],
-	"all_comparisons.xlsx"
-)
-
-# Or with custom sheet names
-XLSX.writetable("custom_results.xlsx",
-	"n=100" => CSV.read("comparison_n100.csv", DataFrame),
-	"n=200" => CSV.read("comparison_n200.csv", DataFrame)
-)
-"""
-
-# # Or on iterations
-# ex1_plot_file_Iters = prepare_filepath("results/example1/profile_Iters.png", dated = true)
-# plt_iter = performance_profile_from_csv(ex1_n100_file; tag = "Iter", savepath = ex1_plot_file_Iters)
-
-# # Provide explicit solver order (optional)
-# ex1_plot_file_time_all = prepare_filepath("results/example1/profile_TimeAll.png", dated = true)
-# plt2 = performance_profile_from_csv(ex1_n100_file; tag = "Time",
-# 	solvers = ["IPCMAS1", "DeyHICPP", "IPCMAS2"], savepath = ex1_plot_file_time_all)
