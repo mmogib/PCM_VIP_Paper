@@ -8,6 +8,6 @@ using DataFrames
 using BenchmarkProfiles
 using ProgressMeter
 using Parameters
-using Plots
+using Plots, LaTeXStrings, StatsPlots
 using ColorSchemes
 # using Integrals, QuadGK

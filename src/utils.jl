@@ -17,29 +17,30 @@ csv_to_xlsx("comparison_n100.csv", "results.xlsx")
 csv_to_xlsx("comparison_n100.csv", "results.xlsx", sheet_name="n=100")
 ```
 """
-function csv_to_xlsx(csv_file::String, xlsx_file::String = "";
-	sheet_name::String = "Sheet1", overwrite = false)
+function csv_to_xlsx(csv_file::String, xlsx_file::String="";
+    sheet_name::String="Sheet1", overwrite=false)
 
-	# Check if CSV file exists
-	if !isfile(csv_file)
-		error("CSV file not found: $csv_file")
-	end
+    # Check if CSV file exists
+    if !isfile(csv_file)
+        error("CSV file not found: $csv_file")
+    end
 
-	# Default output filename
-	if isempty(xlsx_file)
-		xlsx_file = replace(csv_file, ".csv" => ".xlsx")
-	end
+    # Default output filename
+    if isempty(xlsx_file)
+        xlsx_file = replace(csv_file, ".csv" => ".xlsx")
+    end
 
-	# Read CSV file
-	df = CSV.read(csv_file, DataFrame)
+    # Read CSV file
+    df = CSV.read(csv_file, DataFrame)
+    dfg = groupby(df, [:Algorithm, :Dimension, :Error])
+    dfc = combine(dfg, :Time => mean => :time, :Iter => mean => :iters, :Converged => sum => :num_converged)
+    # Write to XLSX
+    XLSX.writetable(xlsx_file, [sheet_name => df, "$(sheet_name)_summary" => dfc], overwrite=overwrite)
 
-	# Write to XLSX
-	XLSX.writetable(xlsx_file, sheet_name => df, overwrite = overwrite)
+    println("Successfully converted $csv_file to $xlsx_file")
+    println("Sheet name: $sheet_name")
 
-	println("Successfully converted $csv_file to $xlsx_file")
-	println("Sheet name: $sheet_name")
-
-	return xlsx_file
+    return xlsx_file
 end
 
 """
@@ -59,37 +60,37 @@ csv_to_xlsx_multiple(
 )
 ```
 """
-function csv_to_xlsx_multiple(csv_files::Vector{String}, xlsx_file::String; sheet_names::Vector{String} = [], overwrite = false)
+function csv_to_xlsx_multiple(csv_files::Vector{String}, xlsx_file::String; sheet_names::Vector{String}=[], overwrite=false)
 
-	# Check if all CSV files exist
-	for csv_file in csv_files
-		if !isfile(csv_file)
-			error("CSV file not found: $csv_file")
-		end
-	end
+    # Check if all CSV files exist
+    for csv_file in csv_files
+        if !isfile(csv_file)
+            error("CSV file not found: $csv_file")
+        end
+    end
 
-	# Read all CSV files
-	gotSheetNames = length(sheet_names) > 0
-	sheets = Dict{String, DataFrame}()
-	for (i, csv_file) in enumerate(csv_files)
-		# Get sheet name from filename (without .csv extension)
-		sheet_name = gotSheetNames ? sheet_names[i] : replace(basename(csv_file), ".csv" => "")
+    # Read all CSV files
+    gotSheetNames = length(sheet_names) > 0
+    sheets = Dict{String,DataFrame}()
+    for (i, csv_file) in enumerate(csv_files)
+        # Get sheet name from filename (without .csv extension)
+        sheet_name = gotSheetNames ? sheet_names[i] : replace(basename(csv_file), ".csv" => "")
 
-		# Read CSV
-		df = CSV.read(csv_file, DataFrame)
+        # Read CSV
+        df = CSV.read(csv_file, DataFrame)
 
-		push!(sheets, sheet_name => df)
-	end
+        push!(sheets, sheet_name => df)
+    end
 
-	# Write to XLSX with multiple sheets
-	XLSX.writetable(xlsx_file, sheets..., overwrite = overwrite)
+    # Write to XLSX with multiple sheets
+    XLSX.writetable(xlsx_file, sheets..., overwrite=overwrite)
 
-	println("Successfully created $xlsx_file with $(length(csv_files)) sheets:")
-	for (sheet_name, _) in sheets
-		println("  - $sheet_name")
-	end
+    println("Successfully created $xlsx_file with $(length(csv_files)) sheets:")
+    for (sheet_name, _) in sheets
+        println("  - $sheet_name")
+    end
 
-	return xlsx_file
+    return xlsx_file
 end
 
 
@@ -153,145 +154,145 @@ end
 # end
 
 function performance_profile_from_csv(
-	path::AbstractString;
-	tag::String = "Time",
-	solvers::Union{Nothing, Vector{String}} = nothing,
-	treat_nonconverged_as_inf::Bool = true,
-	savepath::Union{Nothing, AbstractString} = nothing,
-	return_data::Bool = false,
+    path::AbstractString;
+    tag::String="Time",
+    solvers::Union{Nothing,Vector{String}}=nothing,
+    treat_nonconverged_as_inf::Bool=true,
+    savepath::Union{Nothing,AbstractString}=nothing,
+    return_data::Bool=false,
 )
-	df = CSV.read(path, DataFrame)
-	if solvers === nothing
-		solvers = unique(df.Algorithm)
-	end
+    df = CSV.read(path, DataFrame)
+    if solvers === nothing
+        solvers = unique(df.Algorithm)
+    end
 
-	perf = Dict{String, Vector{Float64}}()
-	for s in solvers
-		subdf = df[df.Algorithm.==s, :]
-		v = Float64.(subdf[!, tag])
-		if treat_nonconverged_as_inf && :Converged in propertynames(subdf)
-			conv = subdf[!, :Converged]
-			@inbounds for i in eachindex(v)
-				if !(conv[i] === true)
-					v[i] = NaN
-				end
-			end
-		end
-		perf[s] = v
-	end
+    perf = Dict{String,Vector{Float64}}()
+    for s in solvers
+        subdf = df[df.Algorithm.==s, :]
+        v = Float64.(subdf[!, tag])
+        if treat_nonconverged_as_inf && :Converged in propertynames(subdf)
+            conv = subdf[!, :Converged]
+            @inbounds for i in eachindex(v)
+                if !(conv[i] === true)
+                    v[i] = NaN
+                end
+            end
+        end
+        perf[s] = v
+    end
 
-	solvers = collect(keys(perf))
-	data = hcat(values(perf)...)
+    solvers = collect(keys(perf))
+    data = hcat(values(perf)...)
 
-	plt = performance_profile(PlotsBackend(), data, solvers;
-		xlabel = "τ",
-		ylabel = "Proportion of problems",
-		title = "Performance Profile — $(tag)",
-		legend = :bottomright,
-		palette = palette(ColorSchemes.seaborn_dark),
-		linestyle = :dash,
-		linewidth = 2,
-	)
+    plt = performance_profile(PlotsBackend(), data, solvers;
+        xlabel="τ",
+        ylabel="Proportion of problems",
+        title="Performance Profile — $(tag)",
+        legend=:bottomright,
+        palette=palette(ColorSchemes.seaborn_dark),
+        linestyle=:dash,
+        linewidth=2,
+    )
 
-	display(plt)
-	if savepath !== nothing
-		savefig(plt, savepath)
-	end
+    display(plt)
+    if savepath !== nothing
+        savefig(plt, savepath)
+    end
 
-	return return_data ? (plt, perf) : plt
+    return return_data ? (plt, perf) : plt
 end
 
 
-function prepare_filepath(path::AbstractString; dated::Bool = false)::String
-	dir = dirname(path)
-	if !isempty(dir) && !isdir(dir)
-		mkpath(dir)
-	end
-	if !dated
-		return String(path)
-	end
-	name = basename(path)
-	stem, ext = splitext(name)
-	timestamp = Dates.format(Dates.now(), "yyyymmdd_HH_MM_SS")
-	new_name = string(stem, "_", timestamp, ext)
-	return isempty(dir) ? new_name : joinpath(dir, new_name)
+function prepare_filepath(path::AbstractString; dated::Bool=false)::String
+    dir = dirname(path)
+    if !isempty(dir) && !isdir(dir)
+        mkpath(dir)
+    end
+    if !dated
+        return String(path)
+    end
+    name = basename(path)
+    stem, ext = splitext(name)
+    timestamp = Dates.format(Dates.now(), "yyyymmdd_HH_MM_SS")
+    new_name = string(stem, "_", timestamp, ext)
+    return isempty(dir) ? new_name : joinpath(dir, new_name)
 end
 
 
-function newest_csv_by_timestamp(dir::AbstractString, prefix::AbstractString; throw_on_empty::Bool = true)
-	# Regex: ^prefix + yyyymmdd_HH_MM_SS.csv$
-	rx = Regex("^" * prefix * "(\\d{8})_(\\d{2})_(\\d{2})_(\\d{2})\\.csv\$")
+function newest_csv_by_timestamp(dir::AbstractString, prefix::AbstractString; throw_on_empty::Bool=true)
+    # Regex: ^prefix + yyyymmdd_HH_MM_SS.csv$
+    rx = Regex("^" * prefix * "(\\d{8})_(\\d{2})_(\\d{2})_(\\d{2})\\.csv\$")
 
-	candidates = Tuple{DateTime, String}[]
-	for f in readdir(dir; join = true)
-		name = basename(f)
-		m = match(rx, name)
-		m === nothing && continue
-		ymd, HH, MM, SS = m.captures
-		# Build DateTime from captured parts
-		d = Date(ymd, dateformat"yyyymmdd")
-		t = Time(parse(Int, HH), parse(Int, MM), parse(Int, SS))
-		push!(candidates, (DateTime(d, t), f))
-	end
+    candidates = Tuple{DateTime,String}[]
+    for f in readdir(dir; join=true)
+        name = basename(f)
+        m = match(rx, name)
+        m === nothing && continue
+        ymd, HH, MM, SS = m.captures
+        # Build DateTime from captured parts
+        d = Date(ymd, dateformat"yyyymmdd")
+        t = Time(parse(Int, HH), parse(Int, MM), parse(Int, SS))
+        push!(candidates, (DateTime(d, t), f))
+    end
 
-	if isempty(candidates)
-		if throw_on_empty
-			error("No files matching pattern $(prefix)YYYYMMDD_HH_MM_SS.csv found in: $dir")
-		else
-			return nothing
-		end
-	end
-	# Pick the file with the maximum timestamp; tie-break by filename for determinism
-	path = last(candidates[end])
-	return path
+    if isempty(candidates)
+        if throw_on_empty
+            error("No files matching pattern $(prefix)YYYYMMDD_HH_MM_SS.csv found in: $dir")
+        else
+            return nothing
+        end
+    end
+    # Pick the file with the maximum timestamp; tie-break by filename for determinism
+    path = last(candidates[end])
+    return path
 end
 
 
 function find_newest_csv(dir::String, prefix::String)
-	files = filter(f -> occursin("$prefix" * r"_\d{8}_\d{2}_\d{2}_\d{2}\.csv", f), readdir(dir))
-	isempty(files) ? "" : joinpath(dir, maximum(files))
+    files = filter(f -> occursin("$prefix" * r"_\d{8}_\d{2}_\d{2}_\d{2}\.csv", f), readdir(dir))
+    isempty(files) ? "" : joinpath(dir, maximum(files))
 end
 
 
 
-function clear_folder_recursive(path::AbstractString; clearSubfolders = false)
-	isdir(path) || return nothing
-	for f in readdir(path; join = true)
-		clearSubfolders ? rm(f; force = true, recursive = true) : (isfile(f) && rm(f; force = true))
-	end
-	return nothing
+function clear_folder_recursive(path::AbstractString; clearSubfolders=false)
+    isdir(path) || return nothing
+    for f in readdir(path; join=true)
+        clearSubfolders ? rm(f; force=true, recursive=true) : (isfile(f) && rm(f; force=true))
+    end
+    return nothing
 end
 
 
 function parse_args(args::Vector{String})
-	opts = Dict{String, Any}()
-	positional = String[]
-	i = 1
-	while i ≤ length(args)
-		a = args[i]
-		if startswith(a, "--")
-			kv = a[3:end]
-			if occursin('=', kv)
-				k, v = split(kv, "=", limit = 2)
-				opts[k] = v
-			else
-				# value in next token, or boolean flag
-				if i < length(args) && !startswith(args[i+1], "-")
-					opts[kv] = args[i+1]
-					i += 1
-				else
-					opts[kv] = true
-				end
-			end
-		elseif startswith(a, "-") && length(a) > 1
-			# short flags bundle: -abc  -> a=true,b=true,c=true
-			for c in a[2:end]
-				opts[string(c)] = true
-			end
-		else
-			push!(positional, a)
-		end
-		i += 1
-	end
-	return opts, positional
+    opts = Dict{String,Any}()
+    positional = String[]
+    i = 1
+    while i ≤ length(args)
+        a = args[i]
+        if startswith(a, "--")
+            kv = a[3:end]
+            if occursin('=', kv)
+                k, v = split(kv, "=", limit=2)
+                opts[k] = v
+            else
+                # value in next token, or boolean flag
+                if i < length(args) && !startswith(args[i+1], "-")
+                    opts[kv] = args[i+1]
+                    i += 1
+                else
+                    opts[kv] = true
+                end
+            end
+        elseif startswith(a, "-") && length(a) > 1
+            # short flags bundle: -abc  -> a=true,b=true,c=true
+            for c in a[2:end]
+                opts[string(c)] = true
+            end
+        else
+            push!(positional, a)
+        end
+        i += 1
+    end
+    return opts, positional
 end
