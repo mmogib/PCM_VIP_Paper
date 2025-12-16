@@ -41,11 +41,11 @@ title = "example 1"
 # get_IPCMAS1_params:: L::Float64; γ = 1.1, μ0 = 0.5, α0 = 0.25, β0 = 0.0001, λ0::Union{Nothing, Float64} = nothing
 # get_DongIPCA_params(L::Float64;	γ::Float64 = 1.5, τ0::Union{Nothing, Float64} = nothing,α::Float64 = 0.4,	α_seq::Function = n -> (n == 1 ? 0.0 : α))
 algorithms = [
-    ("DeyHICPP(λ1=1/1.05L, μ=0.5)", DeyHICPP, L -> get_DeyHICPP_params(L; λ0=1 / (1.05 * L))),
+    ("DeyHICPP", DeyHICPP, L -> get_DeyHICPP_params(L; λ0=1 / (1.05 * L))),
     # ("DongIPCA(λ1=1/1.05L, μ=0.5)", DongIPCA, L -> get_DongIPCA_params(L; τ0 = 1 / (1.05 * L))),
-    ("IPCMAS1(λ1=1/1.05L, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0=0.5, λ0=1 / (1.05 * L))),
+    ("IPCMAS1", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0=0.5, λ0=1 / (1.05 * L))),
     # ("IPCMAS1(λ1=1e-9, μ=0.5)", IPCMAS1, (L) -> get_IPCMAS1_params(L; μ0 = 0.5, λ0 = 1e-9)),
-    ("IPCMAS2(λ1=1/1.05L, γ=1.1)", IPCMAS2, (L) -> get_IPCMAS2_params(L; γ=1.1, λ0=1 / (1.05 * L))),
+    ("IPCMAS2", IPCMAS2, (L) -> get_IPCMAS2_params(L; γ=1.1, λ0=1 / (1.05 * L))),
 ]
 
 errors = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
@@ -70,6 +70,6 @@ csv_file, solutions = startSolvingExample(title, algorithms, setup_example1, dim
     show_progress=show_progress,
     clearfolder=clearfolder,
     plotit=true,
-    plot_comparizon=true,
+    plot_comparizon=false,
     # convergence_dims = nothing
 )

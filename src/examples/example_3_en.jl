@@ -1,3 +1,54 @@
+# ============================================================================
+# ELASTIC NET SIMULATION STUDY
+# ============================================================================
+# 
+# Logic & Steps:
+# 1. Parameter Setup - Configure algorithm parameters for DeyHICPP and IPCMAS1
+# 2. Data Generation - Create synthetic correlated elastic net data (train/val/test)
+# 3. Elastic Net Solver - Solve: min ½||Xw-y||² + (λ₁/(1+λ₂))||w||₁
+# 4. Cross-Validation - k-fold CV to evaluate hyperparameter pairs (λ₁, λ₂)
+# 5. Hyperparameter Selection - Grid search to find optimal (λ₁, λ₂)
+# 6. Model Evaluation - Compute metrics: test MSE, coef error, precision, recall, F1
+# 7. Single Simulation - One run: generate data → select hyperparams → train → evaluate
+# 8. Simulation Study - Multiple runs across algorithms, tracking all metrics
+# 9. Summarize Results - Compute mean/std/median statistics across runs
+# 10. Plotting - Generate 8 comparison plots (MSE, coefficients, selection, timing, etc.)
+# 11. Main Execution - Parse CLI args and run simulations or plotting
+#
+# Output: CSV/XLSX files with results and visualization plots for algorithm comparison
+# ============================================================================
+
+# ============================================================================
+# TRAINING & CROSS-VALIDATION PROCESS
+# ============================================================================
+#
+# Cross-Validation (cross_validate):
+#   - Performs k-fold CV on training data for hyperparameters (λ₁, λ₂)
+#   - Splits n samples into k folds with shuffled indices
+#   - For each fold: holds out validation fold, trains on k-1 folds, computes validation MSE
+#   - Returns average CV error across all folds
+#
+# Hyperparameter Selection (select_hyperparameters):
+#   - Grid search over hyperparameter space
+#   - Default: λ₁ ∈ [0.0, 0.01, 0.1, 1.0, 10.0, 100.0], λ₂ ∈ [0.01, 0.1, 1.0, 10.0, 100.0]
+#   - Tests all λ₁ × λ₂ combinations (30 pairs)
+#   - Calls cross_validate() for each pair to get CV error
+#   - Selects pair with lowest CV error
+#
+# Full Training Cycle (run_single_simulation):
+#   1. Generate data → create train/val/test split
+#   2. Hyperparameter tuning → find best (λ₁, λ₂) via CV
+#   3. Final training → retrain on full training set with best hyperparams
+#   4. Test evaluation → compute all metrics (MSE, coef error, precision, recall, F1)
+#
+# Elastic Net Solver (solve_elastic_net):
+#   - Solves: min ½||Xw-y||² + (λ₁/(1+λ₂))||w||₁
+#   - Computes Lipschitz constant L from X'X
+#   - Calls algorithm (DeyHICPP or IPCMAS1) with convergence tolerance & max iterations
+#   - Returns optimal coefficient vector w
+#
+# ============================================================================
+
 include("../includes.jl")
 
 

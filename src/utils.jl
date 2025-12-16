@@ -160,6 +160,7 @@ function performance_profile_from_csv(
     treat_nonconverged_as_inf::Bool=true,
     savepath::Union{Nothing,AbstractString}=nothing,
     return_data::Bool=false,
+    titled::Bool=false
 )
     df = CSV.read(path, DataFrame)
     if solvers === nothing
@@ -186,8 +187,8 @@ function performance_profile_from_csv(
 
     plt = performance_profile(PlotsBackend(), data, solvers;
         xlabel="τ",
-        ylabel="Proportion of problems",
-        title="Performance Profile — $(tag)",
+        ylabel="Proportion of Problems",
+        title=titled ? "Performance Profile — $(tag)" : "",
         legend=:bottomright,
         palette=palette(ColorSchemes.seaborn_dark),
         linestyle=:dash,
