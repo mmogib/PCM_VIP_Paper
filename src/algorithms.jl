@@ -1,39 +1,26 @@
+##############################################################################
+# IPCMAS1 — Algorithm 1 (Paper's convex combination formula)
+#
+# Update: x_{n+1} = (1-α) z_n + α u_n   (constant α, weights sum to 1)
+#
+# Weak convergence under Assumption (A1)-(A5).
+# NOTE: Converges very slowly in practice when L is large (λ_n ≈ μ/L).
+#       Use DIPCM for practical computations.
+##############################################################################
+
 function get_IPCMAS1_params(L::Float64; γ = 1.1, μ0 = 0.5, α0 = 0.25, β0 = 0.0001, λ0::Union{Nothing, Float64} = nothing)
 
 	μ = μ0
-	λ1 = isnothing(λ0) ? 1.0 / (2 * L) : λ0 #  # Constant step size
-	α_fixed = α0
-	# rng = Xoshiro(2025)
-	# U = Uniform(0, (1 - 3α_fixed) / (3 * (1 - α_fixed)))
-
-	β = β0 #rand(rng, U)
-	aseq() = begin
-		prefix = Float64[0.0]   # prefix[k+1] stores sum_{i=1}^k 1/i^2
-		function (n::Int)
-			n ≥ 1 || throw(ArgumentError("n must be ≥ 0"))
-			while length(prefix) - 1 < n
-				k = length(prefix)          # next i to add
-				push!(prefix, prefix[end] + 1.0 / (2^k))
-			end
-			return prefix[n+1]
-		end
-	end
-
-	β_seq(n) = 1.0 / (5 * n + 1)
-	α_seq(n) = 0.8 - β_seq(n)
-	# α_seq(n) = α_fixed #  0.8 - β_seq(n)
-	a_seq(n) = 100 / (n + 1)^(1.1) #aseq()
-	# ι_seq = n -> 1.0 / n^2
+	λ1 = isnothing(λ0) ? 1.0 / (2 * L) : λ0
+	a_seq(n) = 100 / (n + 1)^(1.1)
 	θ_seq(n) = 0.9
 
 	return (
 		γ = γ,
 		μ = μ,
 		λ1 = λ1,
-		β = β,
-		α = α_fixed,
-		β_seq = β_seq,
-		α_seq = α_seq,
+		β = β0,
+		α = α0,
 		a_seq = a_seq,
 		θ_seq = θ_seq,
 	)
@@ -41,7 +28,7 @@ end
 
 function IPCMAS1(problem::Problem;
 	γ = 1.8, μ = 0.5, λ1 = 0.25, α = 0.3, β = 0.1,
-	β_seq = n -> 0.5, α_seq = n -> 0.3, a_seq = n -> 0.0, θ_seq = n -> 0.9,
+	a_seq = n -> 0.0, θ_seq = n -> 0.9,
 	tol = 1e-6, maxiter = 10000)::Solution
 
 	Aresolvant, B, x0, x1, name = problem.Aλ, problem.B, problem.x0, problem.x1, problem.name
@@ -70,10 +57,8 @@ function IPCMAS1(problem::Problem;
 		normxk = norm(x_prev - x_curr)
 		push!(history[:xk], normxk)
 		# Get current parameters
-		β_n = β_seq(n)
 		θ_n = θ_seq(n)
 		a_n = a_seq(n)
-		α_n = α_seq(n)
 
 		# Step 1: Compute zₙ, wₙ, and yₙ
 		z_n = x_curr + β * (x_curr - x_prev)
@@ -107,8 +92,8 @@ function IPCMAS1(problem::Problem;
 
 		u_n = w_n - γ * η_n * d_n
 
-		# Step 3: Compute xₙ₊₁
-		x_next = (1 - α_n - β_n) * z_n + α_n * u_n
+		# Step 3: Compute xₙ₊₁ = (1-α)zₙ + α uₙ  (paper's convex combination)
+		x_next = (1 - α) * z_n + α * u_n
 
 
 		# Update λₙ₊₁
@@ -135,8 +120,8 @@ function IPCMAS1(problem::Problem;
 		converged = converged,
 		parameters = Dict(
 			:γ => γ, :μ => μ, :λ1 => λ1, :α => α, :β => β,
-			:β_seq => β_seq, :α_seq => α_seq, :a_seq => a_seq,
-			:tol => 1e-6, :maxiter => 10000,
+			:a_seq => a_seq, :θ_seq => θ_seq,
+			:tol => tol, :maxiter => maxiter,
 		),
 		history = history,
 	)
@@ -144,6 +129,167 @@ function IPCMAS1(problem::Problem;
 end
 
 
+
+##############################################################################
+# DIPCM — Double Inertial PCM with Implicit Contraction (Section 3.4)
+#
+# Update: x_{n+1} = α z_n + σ_n u_n   (weights sum to α + σ_n < 1)
+# where σ_n = (1-α) - β_n,  β_n → 0,  Σβ_n = ∞
+#
+# The missing weight β_n = 1 - α - σ_n contracts toward the origin.
+# Converges strongly to P_Ω(0) (minimum-norm solution).
+##############################################################################
+
+function get_DIPCM_params(L::Float64;
+	γ = 1.1, μ0 = 0.5, α0 = 0.2, β_zn = 0.0001, θ_bar = 0.9,
+	β_decay = n -> 1.0 / (n + 1),
+	λ0::Union{Nothing,Float64} = nothing)
+
+	λ1 = isnothing(λ0) ? 1.0 / (2 * L) : λ0
+	a_seq(n) = 100 / (n + 1)^(1.1)
+
+	return (
+		γ = γ,
+		μ = μ0,
+		λ1 = λ1,
+		α = α0,
+		β_zn = β_zn,
+		θ_bar = θ_bar,
+		β_decay = β_decay,
+		a_seq = a_seq,
+	)
+end
+
+"""
+DIPCM — Double Inertial PCM with Implicit Contraction
+
+Algorithm (paper Section 3.4):
+  z_n = x_n + β_zn (x_n - x_{n-1})        (second inertial)
+  w_n = x_n + θ_n (x_n - x_{n-1})         (first inertial)
+  y_n = J^A_λ(w_n - λ_n B(w_n))
+  u_n = w_n - γ η_n d_n                    (projection-contraction step)
+  x_{n+1} = α z_n + σ_n u_n               (two-term update, weights < 1)
+
+where σ_n = (1-α) - β_n,  β_n = β_decay(n) → 0, Σβ_n = ∞.
+The missing weight β_n contracts toward origin.
+
+Converges strongly to P_Ω(0) (Theorem in Section 3.4).
+"""
+function DIPCM(problem::Problem;
+	γ = 1.1, μ = 0.5, λ1 = 0.25,
+	α = 0.2, β_zn = 0.0001, θ_bar = 0.9,
+	β_decay = n -> 1.0 / (n + 1),
+	a_seq = n -> 100 / (n + 1)^(1.1),
+	tol = 1e-6, maxiter = 50000)::Solution
+
+	Aresolvant, B, x0, x1, name = problem.Aλ, problem.B, problem.x0, problem.x1, problem.name
+	dot, norm = problem.dot, problem.norm
+	stopping_criterion = problem.stopping
+
+	@assert 0 < γ < 2 "γ must be in (0,2)"
+	@assert 0 < μ < 1 "μ must be in (0,1)"
+	@assert λ1 > 0 "λ₁ must be positive"
+	@assert 0 < α < 1 "α must be in (0,1)"
+
+	x_prev = copy(x0)
+	x_curr = copy(x1)
+	λ_curr = λ1
+	n = 1
+	converged = false
+	J_A(x, λ) = Aresolvant(x, λ)
+
+	history = Dict(
+		:dk => Vector{Float64}(),
+		:xk => Vector{Float64}(),
+		:err => Vector{Float64}(),
+	)
+
+	while n <= maxiter
+		normxk = norm(x_prev - x_curr)
+		push!(history[:xk], normxk)
+
+		# Halpern parameter
+		β_n = β_decay(n)
+		σ_n = (1 - α) - β_n
+		if σ_n ≤ 0
+			σ_n = eps()
+			β_n = (1 - α) - σ_n
+		end
+
+		# θ_n: use fixed θ_bar in practice (adaptive control is for the proof only)
+		θ_n = θ_bar
+
+		# Step 1: z_n and w_n (double inertial)
+		z_n = x_curr + β_zn * (x_curr - x_prev)
+		w_n = x_curr + θ_n * (x_curr - x_prev)
+
+		# y_n = J^A_λ(w_n - λ B(w_n))
+		B_wn = B(w_n)
+		y_n = J_A(w_n - λ_curr * B_wn, λ_curr)
+
+		# Stopping criterion: y_n ≈ w_n
+		stop, err = stopping_criterion(y_n - w_n, tol)
+		push!(history[:err], err)
+		if stop
+			converged = true
+			x_curr = y_n
+			break
+		end
+
+		# Step 2: d_n, η_n, u_n (projection-contraction)
+		B_yn = B(y_n)
+		d_n = w_n - y_n - λ_curr * (B_wn - B_yn)
+
+		normd = norm(d_n)
+		push!(history[:dk], normd)
+		η_n = if normd > eps()
+			dot(w_n - y_n, d_n) / (normd^2)
+		else
+			0.0
+		end
+
+		u_n = w_n - γ * η_n * d_n
+
+		# Step 3: x_{n+1} = α z_n + σ_n u_n  (two-term, weights < 1)
+		x_next = α * z_n + σ_n * u_n
+
+		# Step 4: Adaptive stepsize update
+		B_diff_norm = norm(B_wn - B_yn)
+		w_y_norm = norm(w_n - y_n)
+		a_n = a_seq(n)
+
+		λ_next = if B_diff_norm > eps()
+			min(μ * w_y_norm / B_diff_norm, λ_curr + a_n)
+		else
+			λ_curr + a_n
+		end
+
+		x_prev = x_curr
+		x_curr = x_next
+		λ_curr = λ_next
+		n += 1
+	end
+
+	return Solution{typeof(x_curr)}(;
+		solver = "DIPCM",
+		problem = problem,
+		solution = x_curr,
+		iterations = n - 1,
+		converged = converged,
+		parameters = Dict(
+			:γ => γ, :μ => μ, :λ1 => λ1,
+			:α => α, :β_zn => β_zn, :θ_bar => θ_bar,
+			:β_decay => β_decay, :a_seq => a_seq,
+			:tol => tol, :maxiter => maxiter,
+		),
+		history = history,
+	)
+end
+
+
+##############################################################################
+# IPCMAS2 — Algorithm 2 (R-linear convergence under strong monotonicity)
+##############################################################################
 
 function get_IPCMAS2_params(L::Float64; γ = 1.8, μ0 = 0.5, α0 = 0.25, λ0::Union{Nothing, Float64} = nothing)
 	# 	# Parameters from the paper for Example 1
@@ -396,6 +542,153 @@ function DeyHICPP(problem::Problem;
 end
 
 
+
+##############################################################################
+# Suantai, Cholamjiak, Inkrong, Kesornprom (2024)
+# "A fast contraction algorithm using two inertial extrapolations for
+#  variational inclusion problem and data classification"
+# Carpathian J. Math. 40(3), 737-752.
+# Algorithm 3.1
+##############################################################################
+
+"""
+Parameters from Suantai et al. (2024), Section 4 (paper defaults):
+  γ = 0.1, μ = 0.9, λ₀ = 0.01, η_k = 1/(k+1)², δ_k = 1/(5k+2)³
+"""
+function get_Suantai2024_params(L::Float64;
+	γ = 0.1, μ0 = 0.9, λ0 = 0.01,
+	η_seq = k -> 1.0 / (k + 1)^2,
+	δ_seq = k -> 1.0 / (5 * k + 2)^3)
+
+	return (
+		γ = γ,
+		μ = μ0,
+		λ1 = λ0,
+		η_seq = η_seq,
+		δ_seq = δ_seq,
+	)
+end
+
+
+"""
+Algorithm 3.1 from Suantai et al. (2024), Carpathian J. Math. 40(3), 737-752.
+
+Two inertial extrapolation terms combined in a single step using three
+consecutive iterates (x_k, x_{k-1}, x_{k-2}):
+
+    w_k = x_k + η_k(x_k - x_{k-1}) + δ_k(x_{k-1} - x_{k-2})
+    y_k = J^A_{λ_k}(w_k - λ_k f(w_k))
+    d(w_k, y_k) = (w_k - y_k) - λ_k(f(w_k) - f(y_k))
+    x_{k+1} = w_k - γ β_k d(w_k, y_k)
+
+with adaptive stepsize λ_{k+1} = min{μ‖w_k-y_k‖/‖f(w_k)-f(y_k)‖, λ_k}.
+"""
+function Suantai2024(problem::Problem;
+	γ = 1.5, μ = 0.5, λ1 = 0.5,
+	η_seq = k -> 1.0 / (k + 1)^2,
+	δ_seq = k -> 1.0 / (k + 1)^2,
+	tol = 1e-6, maxiter = 10000)::Solution
+
+	Aresolvant, B, x0, x1, name = problem.Aλ, problem.B, problem.x0, problem.x1, problem.name
+	_dot, _norm = problem.dot, problem.norm
+	stopping_criterion = problem.stopping
+
+	# Validate parameters
+	@assert 0 < γ < 2 "γ must be in (0,2)"
+	@assert 0 < μ < 1 "μ must be in (0,1)"
+	@assert λ1 > 0 "λ₁ must be positive"
+
+	# Initialize: need x_{k-2}, x_{k-1}, x_k (three consecutive iterates)
+	x_pp = copy(x0)   # x_{k-2}
+	x_prev = copy(x0) # x_{k-1}
+	x_curr = copy(x1) # x_k
+	λ_curr = λ1
+	k = 1
+	converged = false
+
+	J_A(x, λ) = Aresolvant(x, λ)
+	history = Dict(
+		:dk => Vector{Float64}(),
+		:xk => Vector{Float64}(),
+		:err => Vector{Float64}(),
+	)
+
+	while k <= maxiter
+		normxk = _norm(x_curr - x_prev)
+		push!(history[:xk], normxk)
+
+		# Get current inertial parameters
+		η_k = η_seq(k)
+		δ_k = δ_seq(k)
+
+		# Step 1: w_k = x_k + η_k(x_k - x_{k-1}) + δ_k(x_{k-1} - x_{k-2})
+		w_k = x_curr + η_k * (x_curr - x_prev) + δ_k * (x_prev - x_pp)
+
+		# Step 2: y_k = J^A_{λ_k}(w_k - λ_k f(w_k))
+		B_wk = B(w_k)
+		y_k = J_A(w_k - λ_curr * B_wk, λ_curr)
+
+		# Check stopping criterion
+		stop, err = stopping_criterion(y_k - w_k, tol)
+		push!(history[:err], err)
+		if stop
+			converged = true
+			x_curr = y_k
+			break
+		end
+
+		# Step 3: d(w_k, y_k) and β_k
+		B_yk = B(y_k)
+		d_k = w_k - y_k - λ_curr * (B_wk - B_yk)
+
+		normd = _norm(d_k)
+		push!(history[:dk], normd)
+
+		ϕ_k = _dot(w_k - y_k, d_k)
+		β_k = if normd > eps()
+			ϕ_k / (normd^2)
+		else
+			0.0
+		end
+
+		# Step 4: x_{k+1} = w_k - γ β_k d(w_k, y_k)
+		x_next = w_k - γ * β_k * d_k
+
+		# Update λ_{k+1} = min{μ‖w_k-y_k‖/‖f(w_k)-f(y_k)‖, λ_k}
+		B_diff_norm = _norm(B_wk - B_yk)
+		w_y_norm = _norm(w_k - y_k)
+
+		λ_next = if B_diff_norm > eps()
+			min(μ * w_y_norm / B_diff_norm, λ_curr)
+		else
+			λ_curr
+		end
+
+		# Shift iterates: x_{k-2} <- x_{k-1}, x_{k-1} <- x_k, x_k <- x_{k+1}
+		x_pp = x_prev
+		x_prev = x_curr
+		x_curr = x_next
+		λ_curr = λ_next
+		k += 1
+	end
+
+	solution = Solution{typeof(x_curr)}(;
+		solver = "SICIP",
+		problem = problem,
+		solution = x_curr,
+		iterations = k - 1,
+		converged = converged,
+		parameters = Dict(
+			:γ => γ, :μ => μ, :λ1 => λ1,
+			:η_seq => η_seq, :δ_seq => δ_seq,
+			:tol => tol, :maxiter => maxiter,
+		),
+		history = history,
+	)
+	return solution
+end
+
+##############################################################################
 
 function get_DongIPCA_params(L::Float64;
 	γ::Float64 = 1.5,

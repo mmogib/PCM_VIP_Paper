@@ -49,7 +49,7 @@
 #
 # ============================================================================
 
-include("../includes.jl")
+include("../src/includes.jl")
 
 
 function get_DeyHICPP_params_EN(L::Float64)
@@ -66,15 +66,19 @@ function get_DeyHICPP_params_EN(L::Float64)
 end
 
 
-# IPCMAS1 params for elastic net (archived — matches paper's constant-α formula)
+# IPCMAS1 params for elastic net (matches paper's Algorithm 1 — constant α, no sequences)
+# NOTE: IPCMAS1 converges very slowly in practice. Will be replaced by DIPCM in Step 5.
 function get_IPCMAS1_params_EN(L::Float64; γ=1.1, μ0=0.5, α0=0.25, β0=0.3, λ0=0.5)
     a_seq(n) = 100 / (n)^(2)
     θ_seq(n) = 0.9
     return (
-        γ=γ, μ=μ0,
+        γ=γ,
+        μ=μ0,
         λ1=isnothing(λ0) ? 1.0 / (2 * L) : λ0,
-        β=β0, α=α0,
-        a_seq=a_seq, θ_seq=θ_seq,
+        β=β0,
+        α=α0,
+        a_seq=a_seq,
+        θ_seq=θ_seq,
     )
 end
 
@@ -687,7 +691,8 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
 
     # Extract data
     algorithms = df.Algorithm
-    colors = [:steelblue, :coral]
+    n_alg = length(algorithms)
+    colors = [:steelblue, :coral, :seagreen, :purple, :orange][1:n_alg]
     bar_width = 0.6
 
 
@@ -695,10 +700,10 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
     # ============================================================================
     # Plot 1: Test MSE Comparison
     # ============================================================================
-    p1 = bar(1:2, df.TestMSE_mean,
+    p1 = bar(1:n_alg, df.TestMSE_mean,
         yerr=df.TestMSE_std,
         ylabel="Test MSE",
-        xticks=(1:2, algorithms),
+        xticks=(1:n_alg, algorithms),
         xrotation=45,
         color=colors,
         alpha=0.8,
@@ -709,8 +714,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
         title="Test MSE Comparison"
     )
 
-    # Add values on bars
-    for i in 1:2
+    for i in 1:n_alg
         annotate!(i, df.TestMSE_mean[i] + df.TestMSE_std[i] + 1.5,
             text(string(round(df.TestMSE_mean[i], digits=2)), 10, :center))
     end
@@ -720,10 +724,10 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
     # ============================================================================
     # Plot 2: Coefficient Error Comparison
     # ============================================================================
-    p2 = bar(1:2, df.CoefError_mean,
+    p2 = bar(1:n_alg, df.CoefError_mean,
         yerr=df.CoefError_std,
         ylabel="Error " * L"\|\|\tilde{w}^*-\tilde{w}\|\|",
-        xticks=(1:2, algorithms),
+        xticks=(1:n_alg, algorithms),
         xrotation=45,
         color=colors,
         alpha=0.8,
@@ -734,7 +738,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
         title="Coefficient Estimation Error"
     )
 
-    for i in 1:2
+    for i in 1:n_alg
         annotate!(i, df.CoefError_mean[i] + df.CoefError_std[i] + 0.15,
             text(string(round(df.CoefError_mean[i], digits=2)), 10, :center))
     end
@@ -753,7 +757,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
         ylabel="Score",
         xticks=(1:3, ["Precision", "Recall", "F1-Score"]),
         ylim=(0, 1.1),
-        color=[colors[1] colors[2]],
+        color=reshape(colors, 1, :),
         alpha=0.8,
         label=reshape(algorithms, 1, :),
         legend=:topright,
@@ -768,10 +772,10 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
     # ============================================================================
     # Plot 4: Timing Comparison
     # ============================================================================
-    p4 = bar(1:2, df.CVTime_mean,
+    p4 = bar(1:n_alg, df.CVTime_mean,
         yerr=df.CVTime_std,
         ylabel="Cross-Validation Time (seconds)",
-        xticks=(1:2, algorithms),
+        xticks=(1:n_alg, algorithms),
         xrotation=45,
         color=colors,
         alpha=0.8,
@@ -782,7 +786,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
         title="Computational Efficiency"
     )
 
-    for i in 1:2
+    for i in 1:n_alg
         annotate!(i, df.CVTime_mean[i] + df.CVTime_std[i] + 0.3,
             text(string(round(df.CVTime_mean[i], digits=2)) * "s", 10, :center))
     end
@@ -803,6 +807,10 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
 
     savefig(p_combined, "results/example_3/plots/combined_results.png")
 
+    # ============================================================================
+    # Plot 6-8: Only generated for 2-algorithm comparisons
+    # ============================================================================
+    if n_alg == 2
     # ============================================================================
     # Plot 6: Radar Chart for Multi-Metric Comparison
     # ============================================================================
@@ -845,7 +853,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
     p6 = plot(
         angles, ipcmas_scores_closed,
         proj=:polar,
-        label="IPCMAS1",
+        label="DIPCM",
         linewidth=2,
         color=colors[1],
         fillalpha=0.2,
@@ -884,7 +892,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
     )
 
     # Add algorithm names near points
-    for i in 1:2
+    for i in 1:n_alg
         annotate!(df.CVTime_mean[i] + 0.3, df.TestMSE_mean[i] + 1.5,
             text(algorithms[i], 9, :left))
     end
@@ -894,7 +902,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
     # ============================================================================
     # Plot 8: Relative Performance Metrics (as percentages)
     # ============================================================================
-    baseline_idx = 1  # IPCMAS1
+    baseline_idx = 1  # DIPCM
     compare_idx = 2   # DeyHICPP
 
     improvements = [
@@ -909,7 +917,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
     p8 = bar(
         1:4,
         improvements,
-        ylabel="Relative Improvement of IPCMAS1 over DeyHICPP (%)",
+        ylabel="Relative Improvement of DIPCM over DeyHICPP (%)",
         xticks=(1:4, metric_labels),
         xrotation=45,
         color=[improvements[i] > 0 ? :green : :red for i in 1:4],
@@ -918,7 +926,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
         bar_width=0.6,
         linecolor=:black,
         linewidth=1.5,
-        title="IPCMAS1 Performance Relative to DeyHICPP"
+        title="DIPCM Performance Relative to DeyHICPP"
     )
 
     # Add zero line
@@ -932,6 +940,7 @@ function plotit(; clearfolder::Bool=true, output_dir::String="results/example_3"
     end
 
     savefig(p8, "results/example_3/plots/relative_improvement.png")
+    end # if n_alg == 2
 
     println("\n" * "="^80)
     println("All plots saved successfully!")
@@ -950,8 +959,9 @@ end
 
 
 # ============================================================================
-# 8. USAGE EXAMPLE
+# 8. MAIN
 # ============================================================================
+function main()
 opts, positional = parse_args(ARGS)
 
 # Extract simulation parameters with defaults
@@ -968,15 +978,31 @@ maxiter = parse(Int, get(opts, "maxiter", "10000"))
 seed = parse(Int, get(opts, "seed", "2025"))
 clearfolder = any(x -> x in ("--clear", "-c"), ARGS)
 runwhat = get(opts, "run", "all")
+algo_filter = get(opts, "algo", "")
 
 if runwhat in ["all", "runonly"]
-    # Define algorithms with your configuration format
+    ALL_ALGORITHMS = Dict(
+        "DeyHICPP"    => ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_EN),
+        "SICIP"       => ("SICIP", Suantai2024, L -> get_Suantai2024_params(L)),
+        "IPCMAS1"     => ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params_EN(L; γ=1.1, μ0=0.5, α0=0.25, β0=0.3, λ0=0.05)),
+        "DIPCM"       => ("DIPCM", DIPCM, L -> get_DIPCM_params(L; α0=0.2, β_zn=0.2, θ_bar=0.9, λ0=0.05)),
+    )
+    default_keys = ["DeyHICPP", "SICIP", "DIPCM"]
 
+    if !isempty(algo_filter)
+        selected_keys = split(algo_filter, ",") .|> strip .|> String
+        for k in selected_keys
+            haskey(ALL_ALGORITHMS, k) || error("Unknown algorithm '$k'. Available: $(join(keys(ALL_ALGORITHMS), ", "))")
+        end
+    else
+        selected_keys = default_keys
+    end
+    algorithms = [ALL_ALGORITHMS[k] for k in selected_keys if haskey(ALL_ALGORITHMS, k)]
 
-    algorithms = [
-        ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_EN),
-        ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params_EN(L; γ=1.1, μ0=0.5, α0=0.5, β0=0.3, λ0=0.05)),
-    ]
+    # TeeIO logging
+    logpath, tee, logfile = setup_logging("s30_example3"; logdir="results/example_3")
+    println(tee, "Algorithms: ", join(first.(algorithms), ", "))
+    flush(tee)
 
     # Run simulation study
     results = run_simulation_study(
@@ -1025,12 +1051,16 @@ if runwhat in ["all", "runonly"]
         clearfolder=clearfolder
     )
 
-    println("\nFiles saved:")
-    println("  CSV:  ", saved_files.csv)
-    println("  XLSX: ", saved_files.xlsx)
+    println(tee, "\nFiles saved:")
+    println(tee, "  CSV:  ", saved_files.csv)
+    println(tee, "  XLSX: ", saved_files.xlsx)
 
+    teardown_logging(tee, logpath)
 end
 
 if runwhat in ["all", "plot"]
     plotit()
 end
+end # main
+
+main()

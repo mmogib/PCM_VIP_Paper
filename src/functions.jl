@@ -36,6 +36,23 @@ end
 
 
 
+"""
+Build a Set of (algo, dim, problem, error) keys from an existing CSV file for resume.
+Returns empty set if file doesn't exist or is empty.
+"""
+function load_done_set(csv_path::String)
+    done = Set{Tuple{String,Int,String,Float64}}()
+    isfile(csv_path) || return done
+    try
+        df = CSV.read(csv_path, DataFrame)
+        for row in eachrow(df)
+            push!(done, (row.Algorithm, row.Dimension, row[Symbol("Problem Instance")], row.Error))
+        end
+    catch
+    end
+    return done
+end
+
 function generate_comparison_table(algorithms::Vector,
     example_setup, dims::Vector{Int};
     errors=[1e-1, 1e-2, 1e-3, 1e-4, 1e-5],
@@ -44,126 +61,142 @@ function generate_comparison_table(algorithms::Vector,
     maxiter=50000,
     verbose::Bool=false,
     show_progress::Bool=true,
+    io::IO=stdout,
+    resume_file::String="",
+    force::Bool=false,
 )
-    # Algorithm names
     algorithm_names = first.(algorithms)
-    # Setup problem once
+    done_set = (isempty(resume_file) || force) ? Set() : load_done_set(resume_file)
+    n_skipped = 0
 
-    # Store results
-
-    # Progress bar over all runs (errors × algorithms)
     N_ERROR = length(errors)
     N_ALGORITHMS = length(algorithms)
     N_DIMS = length(dims)
     total_tasks = N_ERROR * N_ALGORITHMS * N_DIMS * num_of_instances
     p = show_progress ? Progress(total_tasks; desc=@sprintf("Comparing (n=%s)", join(dims, ","))) : nothing
     all_results = []
-    # Print header (suppress table if progress shown)
+
     if !show_progress
-        println("\n" * "="^(50 + 25 * length(algorithms)))
-        println("Comparison Table: n = $(join(dims, ","))")
-        println("="^(50 + 25 * length(algorithms)))
-        println()
+        println(io, "\n" * "="^(50 + 25 * length(algorithms)))
+        println(io, "Comparison Table: n = $(join(dims, ","))")
+        println(io, "="^(50 + 25 * length(algorithms)))
+        println(io)
     else
-        println(@sprintf("\nComparing algorithms (n=%s) ...", join(dims, ",")))
+        println(io, @sprintf("\nComparing algorithms (n=%s) ...", join(dims, ",")))
     end
+    io isa TeeIO && flush(io)
+
     for n in dims
         problems = example_setup(n, seed=seed, num_of_instances=num_of_instances)
         for (problem_index, problem) in enumerate(problems)
-            # Print column headers
             if !show_progress
-                print(@sprintf("%-10s", "Error"))
+                print(io, @sprintf("%-10s", "Error"))
                 for name in algorithm_names
-                    print(@sprintf(" | %-20s", name))
+                    print(io, @sprintf(" | %-20s", name))
                 end
-                println()
-
-                print(@sprintf("%-10s", ""))
+                println(io)
+                print(io, @sprintf("%-10s", ""))
                 for _ in algorithm_names
-                    print(@sprintf(" | %-9s %-9s", "Time", "No. It."))
+                    print(io, @sprintf(" | %-9s %-9s", "Time", "No. It."))
                 end
-                println()
-                println("-"^(50 + 25 * length(algorithms)))
+                println(io)
+                println(io, "-"^(50 + 25 * length(algorithms)))
             end
 
-            # Run each error level
             for err in errors
                 if !show_progress
-                    print(@sprintf("10^(%d)   ", Int(log10(err))))
+                    print(io, @sprintf("10^(%d)   ", Int(log10(err))))
                 end
                 for (i, (_, algo_func, param_getter)) in enumerate(algorithms)
-                    # Get algorithm-specific parameters
+                    algo_name = algorithm_names[i]
+                    key = (algo_name, n, problem.name, err)
+
+                    # Resume: skip if already done
+                    if key in done_set
+                        n_skipped += 1
+                        if show_progress
+                            next!(p; showvalues=[(:status, "skipped"), (:algo, algo_name), (:dim, n), (:tol, err)])
+                        end
+                        continue
+                    end
+
                     params = param_getter(problem.L)
 
-                    # Solve
                     if verbose && !show_progress
-                        println(@sprintf("Running %-10s at tol=%.1e", algorithm_names[i], err))
-                        println("  params = ", params)
+                        println(io, @sprintf("Running %-10s at tol=%.1e", algo_name, err))
                     end
 
-                    sol = solve_problem(
-                        algo_func, problem, params;
-                        tol=err, maxiter=maxiter, verbose=verbose,
-                    )
-                    (; solution, iterations, converged, time, history) = sol
-                    x, iter, converged = solution, iterations, converged
-                    # Store results
-                    algo_name = algorithm_names[i]
+                    local iterations, converged, time_elapsed
+                    try
+                        sol = solve_problem(
+                            algo_func, problem, params;
+                            tol=err, maxiter=maxiter, verbose=verbose,
+                        )
+                        iterations = sol.iterations
+                        converged = sol.converged
+                        time_elapsed = sol.time
 
-                    push!(all_results,
-                        (
-                            algo_name=algo_name,
-                            dim=n,
-                            problem_name=problem.name,
-                            error=err,
-                            time=time,
-                            iter=iter,
-                            converged=converged,
+                        push!(all_results, (
+                            algo_name=algo_name, dim=n, problem_name=problem.name,
+                            error=err, time=time_elapsed, iter=iterations, converged=converged,
                             lambda=get(sol.parameters, :λ1, ""),
-                            history=history,
-                            full_solution=sol,
-                        ),
-                    )
+                            history=sol.history, full_solution=sol,
+                        ))
 
-                    # Print
-                    if !show_progress
-                        status = converged ? "" : "*"
-                        print(@sprintf(" | %.4f    %5d%s", time, iter, status))
+                        if !isempty(resume_file)
+                            _save_one_row(resume_file, algo_name, n, problem.name, err, time_elapsed, iterations, converged, get(sol.parameters, :λ1, ""))
+                        end
+                    catch e
+                        println(io, "\n  ERROR: $algo_name on $(problem.name) at tol=$err: $e")
+                        iterations = -1
+                        converged = false
+                        time_elapsed = 0.0
                     end
 
-                    # Update progress bar
-                    # sol_quality1 = norm(x - problem.Aλ(x, 0.5))
-                    # sol_quality2 = norm(x - problem.Aλ(x, 10.0))
+                    if !show_progress
+                        status = converged ? "" : (iterations == -1 ? "E" : "*")
+                        print(io, @sprintf(" | %.4f    %5d%s", time_elapsed, iterations, status))
+                    end
+
                     if show_progress
                         next!(p; showvalues=[
-                            (:λ1, get(sol.parameters, :λ1, "NotThere")),
-                            (:instance, problem.name), (:dim, n), (:algo, algorithm_names[i]), (:tol, err), (:iter, iter),
+                            (:instance, problem.name), (:dim, n), (:algo, algo_name), (:tol, err), (:iter, iterations),
                             (:max_iters, maxiter),
-                        ]
-                        )
+                        ])
                     end
                 end
 
                 if !show_progress
-                    println()
+                    println(io)
                 end
             end
         end
     end
 
     if !show_progress
-        println("="^(50 + 25 * length(algorithms)))
-        println("* = Did not converge")
+        println(io, "="^(50 + 25 * length(algorithms)))
+        println(io, "* = Did not converge")
     else
-        println(@sprintf("Finished comparisons (n=%s)", join(dims, ",")))
+        println(io, @sprintf("Finished comparisons (n=%s). Skipped %d already-done configs.", join(dims, ","), n_skipped))
     end
+    io isa TeeIO && flush(io)
     return all_results
 end
 
-function save_comparison_results(results::Vector, filename::String)
+"""Append one result row to CSV (for incremental resume)."""
+function _save_one_row(filepath, algo, dim, problem, err, time, iter, converged, lambda)
+    header = ["Algorithm", "Dimension", "Problem Instance", "Error", "Time", "Iter", "Converged", "lambda1"]
+    needs_header = !isfile(filepath) || filesize(filepath) == 0
+    open(filepath, "a") do f
+        if needs_header
+            println(f, join(header, ","))
+        end
+        println(f, join([algo, dim, problem, err, time, iter, converged, lambda], ","))
+        flush(f)
+    end
+end
 
-    # Create header
-
+function save_comparison_results(results::Vector, filename::String; io::IO=stdout)
     header = [
         (:algo_name, "Algorithm"),
         (:dim, "Dimension"),
@@ -177,9 +210,8 @@ function save_comparison_results(results::Vector, filename::String)
     headers_symbols = first.(header)
     headers_names = last.(header)
     results = map(x -> x[filter(y -> y in headers_symbols, keys(x))], results)
-    # Save
     writedlm(filename, vcat([headers_names], results), ',')
-    println("\nResults saved to $filename")
+    println(io, "\nResults saved to $filename")
 end
 
 function startSolvingExample(title::String, algorithms::Vector, example_setup, dims::Vector{Int};
@@ -193,17 +225,17 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
     plot_comparizon=true,
     plot_convergence=(results) -> println("No ploting convergence provided"),
     convergence_dims::Union{Nothing,Vector{Int}}=nothing,
+    io::IO=stdout,
+    force::Bool=false,
 )
+    println(io, "\n" * "="^70)
+    println(io, "$(uppercase(title)): Algorithm Comparison")
+    println(io, "="^70)
+    io isa TeeIO && flush(io)
 
-    println("\n" * "="^70)
-    println("$(uppercase(title)): Algorithm Comparison")
-    println("="^70)
+    title_clean = replace(title, " " => "_")
+    resume_csv = prepare_filepath("results/$(title_clean)/comparison_incremental.csv", dated=false)
 
-    # Define algorithms to compare
-    # Each entry is (algorithm_function, parameter_getter_function)
-
-
-    # Generate Table 1 (n = 100)
     results = generate_comparison_table(
         algorithms, example_setup, dims,
         errors=errors,
@@ -212,28 +244,34 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
         maxiter=maxiter,
         verbose=verbose,
         show_progress=show_progress,
+        io=io,
+        resume_file=resume_csv,
+        force=force,
     )
-    title = replace(title, " " => "_")
-    # clear previous results
-    if clearfolder
-        clear_folder_recursive("results/$title"; clearSubfolders=false)
-    end
-    # Save results
-    ex1_ns_file = prepare_filepath("results/$(title)/comparison_all.csv", dated=true)
-    # ex1_messages_file = prepare_filepath("results/$(title)/messages.txt", dated = true)
-    ex1_all_file = prepare_filepath("results/$(title)/all_comparisons.xlsx", dated=true)
 
-    save_comparison_results(results, ex1_ns_file)
-    # writedlm(ex1_messages_file, map(x -> x[:messages], results), ',')
+    if clearfolder
+        clear_folder_recursive("results/$title_clean"; clearSubfolders=false)
+    end
+
+    ex1_ns_file = prepare_filepath("results/$(title_clean)/comparison.csv", dated=false)
+    ex1_all_file = prepare_filepath("results/$(title_clean)/comparisons.xlsx", dated=false)
+
+    # Use incremental CSV as authoritative source (contains both resumed + new results)
+    if isfile(resume_csv)
+        cp(resume_csv, ex1_ns_file; force=true)
+        println(io, "\nResults saved to $ex1_ns_file (from incremental resume file)")
+    else
+        save_comparison_results(results, ex1_ns_file; io=io)
+    end
 
     csv_to_xlsx(ex1_ns_file, ex1_all_file, overwrite=true, sheet_name="all_results")
     if plotit
-        plotProfiles(title, ex1_ns_file, "Time")
-        plotProfiles(title, ex1_ns_file, "Iter")
+        plotProfiles(title_clean, ex1_ns_file, "Time")
+        plotProfiles(title_clean, ex1_ns_file, "Iter")
     end
     solutions = map(x -> x[:full_solution], results)
-    if plot_comparizon
-        savepath = prepare_filepath("results/$(title)/comparizon_plot.png", dated=true)
+    if plot_comparizon && length(solutions) >= 2
+        savepath = prepare_filepath("results/$(title_clean)/$(title_clean)_comparizon_plot.png", dated=false)
         plt = compare_plot(solutions[1].solution, solutions[2].solution)
         savefig(plt, savepath)
     end
@@ -244,7 +282,7 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
 end
 
 function plotProfiles(title, datafile, tag)
-    ex1_plot_file_time = prepare_filepath("results/$(title)/profile_$tag.png", dated=true)
+    ex1_plot_file_time = prepare_filepath("results/$(title)/$(title)_profile_$tag.png", dated=false)
     plt = performance_profile_from_csv(datafile; tag=tag, savepath=ex1_plot_file_time)
 end
 

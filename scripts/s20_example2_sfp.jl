@@ -1,4 +1,4 @@
-include("../includes.jl")
+include("../src/includes.jl")
 
 """
 	Example2Problem
@@ -220,39 +220,66 @@ function get_DeyHICPP_params_L2(L::Float64)
 end
 
 
-# IPCMAS1 params for L2 space (archived — matches paper's constant-α formula)
+# IPCMAS1 params for L2 space (matches paper's Algorithm 1 — constant α, no sequences)
+# NOTE: IPCMAS1 converges very slowly in practice. Will be replaced by DIPCM in Step 4.
 function get_IPCMAS1_params_L2(L::Float64; γ=1.1, μ0=0.5, α0=0.25, β0=0.3, λ0=0.5)
     a_seq(n) = 100 / (n)^(2)
     θ_seq(n) = 0.9
     return (
-        γ=γ, μ=μ0,
+        γ=γ,
+        μ=μ0,
         λ1=isnothing(λ0) ? 1.0 / (2 * L) : λ0,
-        β=β0, α=α0,
-        a_seq=a_seq, θ_seq=θ_seq,
+        β=β0,
+        α=α0,
+        a_seq=a_seq,
+        θ_seq=θ_seq,
     )
 end
 
 
+function main()
 opts, pos = parse_args(ARGS)
+force = any(x -> x == "--force", ARGS)
 title = "example 2"
 initial_points =
     [
         ("Instance 1", t -> t^3 * exp(t) / 211 + 5 * t, t -> sin(t) + t^6),
-        ("Instance 2", t -> exp(t), t -> t * exp(t^3), t -> cos(t)),
-        ("Instance 3", t -> t + 1, t -> 3 * t^2 + t, t -> t^2 * exp(t)),
-        ("Instance 4", t -> 11 * sin(t), t -> 5 * t^2, t -> exp(t / 2)),
+        ("Instance 2", t -> exp(t), t -> t * exp(t^3)),
+        ("Instance 3", t -> t + 1, t -> 3 * t^2 + t),
+        ("Instance 4", t -> 11 * sin(t), t -> 5 * t^2),
         ("Instance 5", t -> 15 * t^3 + exp(t) / 22, t -> sin(t / 2)),
         ("Instance 6", t -> exp(t), t -> cos(2π * t)),
         ("Instance 7", t -> t + 1, t -> 3 * t^3 + 2 * t),
         ("Instance 8", t -> 11 * sin(t), t -> sqrt(t)),
     ]
-algorithms = [
-    ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_L2),
-    ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ=1.1, μ0=0.5, α0=0.5, β0=0.3, λ0=0.05)),
-]
+ALL_ALGORITHMS = Dict(
+    "DeyHICPP"    => ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_L2),
+    "SICIP"       => ("SICIP", Suantai2024, L -> get_Suantai2024_params(L)),
+    "IPCMAS1"     => ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ=1.1, μ0=0.5, α0=0.25, β0=0.3, λ0=0.05)),
+    "DIPCM"       => ("DIPCM", DIPCM, L -> get_DIPCM_params(L; α0=0.2, β_zn=0.2, θ_bar=0.9, λ0=0.05)),
+)
+default_keys = ["DeyHICPP", "SICIP", "DIPCM"]
+
+algo_filter = get(opts, "algo", "")
+if !isempty(algo_filter)
+    selected_keys = split(algo_filter, ",") .|> strip .|> String
+    for k in selected_keys
+        haskey(ALL_ALGORITHMS, k) || error("Unknown algorithm '$k'. Available: $(join(keys(ALL_ALGORITHMS), ", "))")
+    end
+    title *= " ($(algo_filter))"
+else
+    selected_keys = default_keys
+end
+algorithms = [ALL_ALGORITHMS[k] for k in selected_keys if haskey(ALL_ALGORITHMS, k)]
+
+logpath, tee, logfile = setup_logging("s20_example2"; logdir="results/example_2")
+println(tee, "Algorithms: ", join(first.(algorithms), ", "))
+force && println(tee, "  --force: re-running all configs")
+flush(tee)
 
 errors = [1e-3]
-dims = [100]
+dims_str = get(opts, "dim", "100")
+dims = parse.(Int, split(dims_str, ","))
 maxiter = parse(Int, get(opts, "maxiter", get(opts, "itr", "50000")))
 seed = 2025
 num_of_instances = 1
@@ -298,5 +325,11 @@ csv_file, solutions = startSolvingExample(title, algorithms, setup_example2_wrap
     plotit=false,
     plot_comparizon=false,
     plot_convergence=plot_convergence,
+    io=tee,
+    force=force,
 )
+teardown_logging(tee, logpath)
+end # main
+
+main()
 

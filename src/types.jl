@@ -1,6 +1,7 @@
 struct AlgorithmIPCMAS1 end
 struct AlgorithmIPCMAS2 end
 struct AlgorithmDey end
+struct AlgorithmSuantai2024 end
 
 @with_kw struct Problem
     name::String

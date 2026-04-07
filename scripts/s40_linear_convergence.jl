@@ -1,4 +1,4 @@
-include("../includes.jl")
+include("../src/includes.jl")
 
 """
     save_convergence_results(convergence_results, output_dir="results/linear_convergence";
@@ -73,15 +73,19 @@ function get_DeyHICPP_params_EN(L::Float64)
 end
 
 
-# IPCMAS1 params for elastic net (archived — matches paper's constant-α formula)
+# IPCMAS1 params for elastic net (matches paper's Algorithm 1 — constant α, no sequences)
+# NOTE: IPCMAS1 converges very slowly in practice. Will be replaced by DIPCM in Step 6.
 function get_IPCMAS1_params_EN(L::Float64; γ=1.1, μ0=0.5, α0=0.25, β0=0.3, λ0=0.5)
     a_seq(n) = 100 / (n)^(2)
     θ_seq(n) = 0.9
     return (
-        γ=γ, μ=μ0,
+        γ=γ,
+        μ=μ0,
         λ1=isnothing(λ0) ? 1.0 / (2 * L) : λ0,
-        β=β0, α=α0,
-        a_seq=a_seq, θ_seq=θ_seq,
+        β=β0,
+        α=α0,
+        a_seq=a_seq,
+        θ_seq=θ_seq,
     )
 end
 
@@ -580,26 +584,38 @@ end
 
 
 
+function main()
+mkpath("results/linear_convergence")
+
 # Define algorithms
 algorithms = [
     ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_EN),
-    ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params_EN(L; γ=1.1, μ0=0.5, α0=0.5, β0=0.3, λ0=0.05)),
+    ("DIPCM", DIPCM, L -> get_DIPCM_params(L; α0=0.2, β_zn=0.2, θ_bar=0.9, λ0=0.05)),
     ("IPCMAS2", IPCMAS2, (L) -> get_IPCMAS2_params(L; γ=1.1, λ0=1 / (1.05 * L)))
 ]
+
+opts, _ = parse_args(ARGS)
+n_runs = parse(Int, get(opts, "n_runs", "20"))
+seed = parse(Int, get(opts, "seed", "123"))
+maxiter = parse(Int, get(opts, "maxiter", "10000"))
+
+# TeeIO logging
+logpath, tee, logfile = setup_logging("s40_linear_convergence"; logdir="results/linear_convergence")
+
 # Verify linear convergence
-convergence_results = verify_linear_convergence(algorithms, 20;
+convergence_results = verify_linear_convergence(algorithms, n_runs;
     n_train=20, n_test=200,
-    seed=123)
+    seed=seed)
 
 # Print summary
-println("\n" * "="^80)
-println("LINEAR CONVERGENCE VERIFICATION")
-println("="^80)
+println(tee, "\n" * "="^80)
+println(tee, "LINEAR CONVERGENCE VERIFICATION")
+println(tee, "="^80)
 for (alg_name, stats) in convergence_results
-    println("\n$alg_name:")
-    println("  Convergence Rate C: $(round(stats.mean_rate, digits=4)) ± $(round(stats.std_rate, digits=4))")
-    println("  R² (linearity): $(round(stats.mean_r_squared, digits=4))")
-    println("  Linear in $(round(stats.linear_percentage, digits=1))% of runs")
+    println(tee, "\n$alg_name:")
+    println(tee, "  Convergence Rate C: $(round(stats.mean_rate, digits=4)) ± $(round(stats.std_rate, digits=4))")
+    println(tee, "  R² (linearity): $(round(stats.mean_r_squared, digits=4))")
+    println(tee, "  Linear in $(round(stats.linear_percentage, digits=1))% of runs")
 end
 
 
@@ -609,7 +625,7 @@ saved_csv = save_convergence_results(
     convergence_results,
     "results/linear_convergence";
     base_filename="linear_convergence_results",
-    n_runs=20,
+    n_runs=n_runs,
     n_train=20,
     n_test=200,
     n_features=8,
@@ -675,12 +691,12 @@ p_detail, analysis = plot_convergence_rate_verification(
 )
 savefig(p_detail, "results/linear_convergence/ipcmas2_convergence_detail.png")
 
-# Also save for IPCMAS1
+# Also save for DIPCM
 p_detail1, analysis1 = plot_convergence_rate_verification(
-    alg_results["IPCMAS1"].history,
-    "IPCMAS1"
+    alg_results["DIPCM"].history,
+    "DIPCM"
 )
-savefig(p_detail1, "results/linear_convergence/ipcmas1_convergence_detail.png")
+savefig(p_detail1, "results/linear_convergence/dipcm_convergence_detail.png")
 
 # And DeyHICPP
 p_detail_dey, analysis_dey = plot_convergence_rate_verification(
@@ -689,27 +705,12 @@ p_detail_dey, analysis_dey = plot_convergence_rate_verification(
 )
 savefig(p_detail_dey, "results/linear_convergence/deyhicpp_convergence_detail.png")
 
-println("\n" * "="^80)
-println("All results saved!")
-println("="^80)
-println("CSV: $saved_csv")
-println("Plots saved to: results/linear_convergence/")
-println("\nIPCMAS2 Convergence Analysis:")
-println("  Convergence Rate C: $(round(analysis.convergence_rate, digits=4))")
-println("  R² (linearity): $(round(analysis.r_squared, digits=4))")
-println("  Is R-linear: $(analysis.is_linear ? "Yes" : "No")")
+println(tee, "\n" * "="^80)
+println(tee, "All results saved!")
+println(tee, "="^80)
+println(tee, "CSV: $saved_csv")
+println(tee, "Plots saved to: results/linear_convergence/")
+teardown_logging(tee, logpath)
+end # main
 
-
-
-# Plot convergence comparison - improved version
-p_compare = plot_convergence_comparison(alg_results;
-    skip_initial=5,
-    title="Linear Convergence Verification")
-savefig(p_compare, "results/linear_convergence/convergence_comparison.png")
-
-# Alternative: side-by-side comparison
-p_compare_split = plot_convergence_comparison_split(alg_results;
-    skip_initial=5,
-    title="Linear Convergence Verification")
-
-savefig(p_compare_split, "results/linear_convergence/convergence_comparison_split.png")
+main()
