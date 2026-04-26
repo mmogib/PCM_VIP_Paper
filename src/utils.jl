@@ -175,15 +175,14 @@ function performance_profile_from_csv(
             conv = subdf[!, :Converged]
             @inbounds for i in eachindex(v)
                 if !(conv[i] === true)
-                    v[i] = NaN
+                    v[i] = Inf
                 end
             end
         end
         perf[s] = v
     end
 
-    solvers = collect(keys(perf))
-    data = hcat(values(perf)...)
+    data = reduce(hcat, (perf[s] for s in solvers))
 
     plt = performance_profile(PlotsBackend(), data, solvers;
         xlabel="τ",

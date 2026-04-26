@@ -34,14 +34,38 @@ function setup_example1(n::Int; seed=2025, num_of_instances=1)
 end
 
 ALL_ALGORITHMS = Dict(
-    "DeyHICPP"  => ("DeyHICPP", DeyHICPP, L -> get_DeyHICPP_params(L; λ0=1 / (1.05 * L))),
-    "SICIP"     => ("SICIP", Suantai2024, L -> get_Suantai2024_params(L)),
-    "IPCMAS1"   => ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params(L; μ0=0.5, λ0=1 / (1.05 * L))),
-    "IPCMAS2"   => ("IPCMAS2", IPCMAS2, L -> get_IPCMAS2_params(L; γ=1.1, λ0=1 / (1.05 * L))),
-    "DIPCM"     => ("DIPCM", DIPCM, L -> get_DIPCM_params(L; λ0=1 / (1.05 * L))),
+    "DeyHICPP"       => ("DeyHICPP", DeyHICPP, L -> get_DeyHICPP_params(L; λ0=1 / (1.05 * L))),
+    "SICIP"          => ("SICIP", Suantai2024, L -> get_Suantai2024_params(L)),
+    "IPCMAS1"        => ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params(L; μ0=0.5, λ0=1 / (1.05 * L))),
+    "IPCMAS2"        => ("IPCMAS2", IPCMAS2, L -> get_IPCMAS2_params(L; γ=1.1, λ0=1 / (1.05 * L))),
+    "DIPCM"          => ("DIPCM", DIPCM, L -> get_DIPCM_params(L; β_bar=0.3, θ_bar=0.9, λ0=1 / (1.05 * L))),
+    "TanQin2024"     => ("TanQin2024", TanQin2024, L -> get_TanQin2024_params(L)),
+    "ChenMiPCA"      => ("ChenMiPCA", ChenMiPCA, L -> get_ChenMiPCA_params(L; λ0=1 / (1.05 * L))),
+    "PeeyadaIMFBSA"  => ("PeeyadaIMFBSA", PeeyadaIMFBSA, L -> get_PeeyadaIMFBSA_params(L)),
 )
 
+"""
+JIT warmup: compile algorithm specializations on a tiny problem before the timing loop.
+Without this, the first call to each algorithm in the main loop pays full method-compilation
+cost and inflates the Instance-1 time entry of the comparison CSV.
+"""
+function _jit_warmup()
+    probs = setup_example1(10; seed = 1, num_of_instances = 1)
+    prob = probs[1]
+    L = prob.L
+    DIPCM(prob; get_DIPCM_params(L; β_bar = 0.3, θ_bar = 0.9, λ0 = 1 / (1.05 * L))...,
+          tol = 1e-2, maxiter = 1000)
+    DeyHICPP(prob; get_DeyHICPP_params(L; λ0 = 1 / (1.05 * L))...,
+             tol = 1e-2, maxiter = 1000)
+    Suantai2024(prob; get_Suantai2024_params(L)...,
+                tol = 1e-2, maxiter = 1000)
+    IPCMAS2(prob; get_IPCMAS2_params(L; γ = 1.1, λ0 = 1 / (1.05 * L))...,
+            tol = 1e-2, maxiter = 1000)
+    return nothing
+end
+
 function main()
+    _jit_warmup()
     opts, pos = parse_args(ARGS)
     algo_filter = get(opts, "algo", "")
     force = any(x -> x == "--force", ARGS)

@@ -2,5 +2,7 @@
 /results/*
 !/results/.gitkeep
 
-# Ignore archive folder and all its contents
-/archive/
+# Archive: keep Phase-5 archived files (referenced in README/CLAUDE.md);
+# ignore older pre-2026 snapshots.
+/archive/algov*.jl
+/archive/example*.jl

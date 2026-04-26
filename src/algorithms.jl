@@ -8,7 +8,10 @@
 #       Use DIPCM for practical computations.
 ##############################################################################
 
-function get_IPCMAS1_params(L::Float64; γ = 1.1, μ0 = 0.5, α0 = 0.25, β0 = 0.0001, λ0::Union{Nothing, Float64} = nothing)
+function get_IPCMAS1_params(L::Float64; γ = 1.1, μ0 = 0.5, α0 = 0.30, β0 = 0.0119, λ0::Union{Nothing, Float64} = nothing)
+	# Defaults tuned by w11 sensitivity (2026-04-17): α=0.30, β=0.25·β_max(0.30)=0.0119,
+	# θ̄=0.9, ξ_n=100/(n+1)^1.1. Valid under Assumption (A4)-(A5) since α<1/3 and
+	# β_max(0.30) ≈ 0.0476 > 0.0119.
 
 	μ = μ0
 	λ1 = isnothing(λ0) ? 1.0 / (2 * L) : λ0
@@ -27,17 +30,20 @@ function get_IPCMAS1_params(L::Float64; γ = 1.1, μ0 = 0.5, α0 = 0.25, β0 = 0
 end
 
 function IPCMAS1(problem::Problem;
-	γ = 1.8, μ = 0.5, λ1 = 0.25, α = 0.3, β = 0.1,
+	γ = 1.8, μ = 0.5, λ1 = 0.25, α = 0.30, β = 0.0119,
 	a_seq = n -> 0.0, θ_seq = n -> 0.9,
 	tol = 1e-6, maxiter = 10000)::Solution
 
 	Aresolvant, B, x0, x1, name = problem.Aλ, problem.B, problem.x0, problem.x1, problem.name
 	dot, norm = problem.dot, problem.norm
 	stopping_criterion = problem.stopping
-	# Validate parameters
+	# Validate parameters (paper Assumption A1–A5)
 	@assert 0 < γ < 2 "γ must be in (0,2)"
 	@assert 0 < μ < 1 "μ must be in (0,1)"
 	@assert λ1 > 0 "λ₁ must be positive"
+	@assert 0 < α < 1 / 3 "α must be in (0, 1/3) by Assumption (A5)"
+	β_upper = (1 - 3α) / (3 * (1 - α))
+	@assert 0 ≤ β < β_upper "β must be in [0, (1-3α)/(3(1-α)) = $(round(β_upper, digits=4))) by Assumption (A4)"
 
 	# Initialize
 	x_prev = copy(x0)
@@ -131,55 +137,73 @@ end
 
 
 ##############################################################################
-# DIPCM — Double Inertial PCM with Implicit Contraction (Section 3.4)
+# DIPCM — Double Inertial PCM with Implicit Contraction (paper §3.4)
 #
-# Update: x_{n+1} = α z_n + σ_n u_n   (weights sum to α + σ_n < 1)
-# where σ_n = (1-α) - β_n,  β_n → 0,  Σβ_n = ∞
+# 3-term Halpern–Mann update with adaptive inertial parameters.
+#   x_{n+1} = (1 - α_n - σ_n) z_n + σ_n u_n    (α_n is the Halpern weight on 0)
+# Adaptive inertial parameters β'_n, θ_n controlled by sequences ε_n ≤ ε'_n
+# with Σ ε'_n / α_n < ∞ (Assumption A5'').
 #
-# The missing weight β_n = 1 - α - σ_n contracts toward the origin.
-# Converges strongly to P_Ω(0) (minimum-norm solution).
+# Strong convergence to P_Ω(0) without strong monotonicity, via Saejung–Yotkaew
+# convergence lemma (Lemma 2.6 in Saejung & Yotkaew, Nonlinear Anal. 75 (2012)).
 ##############################################################################
 
 function get_DIPCM_params(L::Float64;
-	γ = 1.1, μ0 = 0.5, α0 = 0.2, β_zn = 0.0001, θ_bar = 0.9,
-	β_decay = n -> 1.0 / (n + 1),
+	γ = 1.1, μ0 = 0.5,
+	β_bar = 0.3, θ_bar = 0.9,
+	α_seq = n -> 1.0 / (n + 1),
+	σ_seq = nothing,                             # default below: σ_n = 0.8 - α_n
+	ε_seq = n -> 5.0 / (n + 1)^2.1,              # caps β'_n
+	εp_seq = n -> 10.0 / (n + 1)^2.1,            # caps θ_n;  must satisfy ε_n ≤ ε'_n
+	ξ_seq = n -> 100.0 / (n + 1)^1.1,
 	λ0::Union{Nothing,Float64} = nothing)
 
 	λ1 = isnothing(λ0) ? 1.0 / (2 * L) : λ0
-	a_seq(n) = 100 / (n + 1)^(1.1)
+	σ_eff = isnothing(σ_seq) ? (n -> 0.8 - α_seq(n)) : σ_seq
 
 	return (
 		γ = γ,
 		μ = μ0,
 		λ1 = λ1,
-		α = α0,
-		β_zn = β_zn,
+		β_bar = β_bar,
 		θ_bar = θ_bar,
-		β_decay = β_decay,
-		a_seq = a_seq,
+		α_seq = α_seq,
+		σ_seq = σ_eff,
+		ε_seq = ε_seq,
+		εp_seq = εp_seq,
+		ξ_seq = ξ_seq,
 	)
 end
 
 """
-DIPCM — Double Inertial PCM with Implicit Contraction
+DIPCM — Double Inertial PCM with Implicit Contraction (paper §3.4)
 
-Algorithm (paper Section 3.4):
-  z_n = x_n + β_zn (x_n - x_{n-1})        (second inertial)
-  w_n = x_n + θ_n (x_n - x_{n-1})         (first inertial)
-  y_n = J^A_λ(w_n - λ_n B(w_n))
-  u_n = w_n - γ η_n d_n                    (projection-contraction step)
-  x_{n+1} = α z_n + σ_n u_n               (two-term update, weights < 1)
+Step 1:
+  β'_n = min{β̄, ε_n / ‖x_n - x_{n-1}‖, ε_n / ‖x_n - x_{n-1}‖²}    if x_n ≠ x_{n-1}
+       = β̄                                                          otherwise
+  θ_n  = min{θ̄, ε'_n / ‖x_n - x_{n-1}‖, ε'_n / ‖x_n - x_{n-1}‖²}  if x_n ≠ x_{n-1}
+       = θ̄                                                          otherwise
+  z_n = x_n + β'_n (x_n - x_{n-1})
+  w_n = x_n + θ_n  (x_n - x_{n-1})
+  y_n = J^A_{λ_n}(w_n - λ_n B(w_n))
+Step 2: u_n = w_n - γ η_n d_n      (PCM contraction)
+Step 3: x_{n+1} = (1 - α_n - σ_n) z_n + σ_n u_n
+Step 4: λ_{n+1} = min{μ ‖w_n - y_n‖ / ‖B(w_n) - B(y_n)‖, λ_n + ξ_n}
 
-where σ_n = (1-α) - β_n,  β_n = β_decay(n) → 0, Σβ_n = ∞.
-The missing weight β_n contracts toward origin.
+Assumption halpern (paper line 1753):
+  α_n → 0, Σ α_n = ∞;  σ_n ∈ (a, b) ⊂ (0, 1 - α_n);
+  ε_n ≤ ε'_n with Σ ε'_n / α_n < ∞;  0 ≤ β̄ ≤ θ̄ ≤ 1 (A6'').
 
-Converges strongly to P_Ω(0) (Theorem in Section 3.4).
+Strong convergence to P_Ω(0) by Theorem `thm:halpern-strong`.
 """
 function DIPCM(problem::Problem;
 	γ = 1.1, μ = 0.5, λ1 = 0.25,
-	α = 0.2, β_zn = 0.0001, θ_bar = 0.9,
-	β_decay = n -> 1.0 / (n + 1),
-	a_seq = n -> 100 / (n + 1)^(1.1),
+	β_bar = 0.3, θ_bar = 0.9,
+	α_seq = n -> 1.0 / (n + 1),
+	σ_seq = n -> 0.8 - 1.0 / (n + 1),
+	ε_seq = n -> 5.0 / (n + 1)^2.1,             # caps β'_n
+	εp_seq = n -> 10.0 / (n + 1)^2.1,            # caps θ_n;  must satisfy ε_n ≤ ε'_n
+	ξ_seq = n -> 100.0 / (n + 1)^1.1,
 	tol = 1e-6, maxiter = 50000)::Solution
 
 	Aresolvant, B, x0, x1, name = problem.Aλ, problem.B, problem.x0, problem.x1, problem.name
@@ -189,7 +213,7 @@ function DIPCM(problem::Problem;
 	@assert 0 < γ < 2 "γ must be in (0,2)"
 	@assert 0 < μ < 1 "μ must be in (0,1)"
 	@assert λ1 > 0 "λ₁ must be positive"
-	@assert 0 < α < 1 "α must be in (0,1)"
+	@assert 0 ≤ β_bar ≤ θ_bar ≤ 1 "Need 0 ≤ β̄ ≤ θ̄ ≤ 1 (Assumption A6'')"
 
 	x_prev = copy(x0)
 	x_curr = copy(x1)
@@ -205,25 +229,24 @@ function DIPCM(problem::Problem;
 	)
 
 	while n <= maxiter
-		normxk = norm(x_prev - x_curr)
-		push!(history[:xk], normxk)
+		diff = norm(x_curr - x_prev)
+		push!(history[:xk], diff)
 
-		# Halpern parameter
-		β_n = β_decay(n)
-		σ_n = (1 - α) - β_n
-		if σ_n ≤ 0
-			σ_n = eps()
-			β_n = (1 - α) - σ_n
+		ε_n  = ε_seq(n)
+		εp_n = εp_seq(n)
+
+		# Adaptive inertial parameters (paper eq:newbeta'n, eq:newthetan)
+		if diff > eps()
+			β_n = min(β_bar, ε_n / diff, ε_n / diff^2)
+			θ_n = min(θ_bar, εp_n / diff, εp_n / diff^2)
+		else
+			β_n = β_bar
+			θ_n = θ_bar
 		end
 
-		# θ_n: use fixed θ_bar in practice (adaptive control is for the proof only)
-		θ_n = θ_bar
-
-		# Step 1: z_n and w_n (double inertial)
-		z_n = x_curr + β_zn * (x_curr - x_prev)
+		# Step 1: z_n, w_n, y_n
+		z_n = x_curr + β_n * (x_curr - x_prev)
 		w_n = x_curr + θ_n * (x_curr - x_prev)
-
-		# y_n = J^A_λ(w_n - λ B(w_n))
 		B_wn = B(w_n)
 		y_n = J_A(w_n - λ_curr * B_wn, λ_curr)
 
@@ -239,7 +262,6 @@ function DIPCM(problem::Problem;
 		# Step 2: d_n, η_n, u_n (projection-contraction)
 		B_yn = B(y_n)
 		d_n = w_n - y_n - λ_curr * (B_wn - B_yn)
-
 		normd = norm(d_n)
 		push!(history[:dk], normd)
 		η_n = if normd > eps()
@@ -247,21 +269,23 @@ function DIPCM(problem::Problem;
 		else
 			0.0
 		end
-
 		u_n = w_n - γ * η_n * d_n
 
-		# Step 3: x_{n+1} = α z_n + σ_n u_n  (two-term, weights < 1)
-		x_next = α * z_n + σ_n * u_n
+		# Step 3: 3-term Halpern–Mann update
+		α_n = α_seq(n)
+		σ_n = σ_seq(n)
+		@assert 0 < σ_n < 1 - α_n "σ_n must satisfy 0 < σ_n < 1 - α_n (got σ_$(n)=$σ_n, α_$(n)=$α_n)"
+		x_next = (1 - α_n - σ_n) * z_n + σ_n * u_n
 
-		# Step 4: Adaptive stepsize update
+		# Step 4: λ_{n+1} update
 		B_diff_norm = norm(B_wn - B_yn)
 		w_y_norm = norm(w_n - y_n)
-		a_n = a_seq(n)
+		ξ_n = ξ_seq(n)
 
 		λ_next = if B_diff_norm > eps()
-			min(μ * w_y_norm / B_diff_norm, λ_curr + a_n)
+			min(μ * w_y_norm / B_diff_norm, λ_curr + ξ_n)
 		else
-			λ_curr + a_n
+			λ_curr + ξ_n
 		end
 
 		x_prev = x_curr
@@ -278,8 +302,10 @@ function DIPCM(problem::Problem;
 		converged = converged,
 		parameters = Dict(
 			:γ => γ, :μ => μ, :λ1 => λ1,
-			:α => α, :β_zn => β_zn, :θ_bar => θ_bar,
-			:β_decay => β_decay, :a_seq => a_seq,
+			:β_bar => β_bar, :θ_bar => θ_bar,
+			:α_seq => α_seq, :σ_seq => σ_seq,
+			:ε_seq => ε_seq, :εp_seq => εp_seq,
+			:ξ_seq => ξ_seq,
 			:tol => tol, :maxiter => maxiter,
 		),
 		history = history,
@@ -812,6 +838,443 @@ function DongIPCA(problem::Problem;
 		parameters = Dict(
 			:γ => γ, :τ => τ, :tol => tol, :maxiter => maxiter,
 			:α_seq => α_seq,
+		),
+		history = history,
+	)
+end
+
+
+##############################################################################
+# TanQin2024 — Tan & Qin (2024), Algorithm 3.1
+# "On relaxed inertial projection and contraction algorithms for solving
+#  monotone inclusion problems"
+#
+# Problem: 0 ∈ (A + B)x, A single-valued monotone + L-Lipschitz, B maximal monotone.
+# In our codebase: A ↔ problem.B (single-valued),  B ↔ problem.Aλ (resolvent).
+#
+# Update (using our notation, with s_n playing role of iterate):
+#   u_n = s_n + ζ(s_n − s_{n−1})
+#   t_n = J^B_{χ_n}(u_n − χ_n A(u_n))
+#   g_n = u_n − t_n − χ_n(A(u_n) − A(t_n))
+#   θ_n = ⟨u_n − t_n, g_n⟩ / ‖g_n‖²          (correction coefficient)
+#   q_n = u_n − δ θ_n g_n
+#   s_{n+1} = (1 − φ) s_n + φ q_n
+#
+# Non-monotonic adaptive stepsize:
+#   χ_{n+1} = min{κ‖u_n − t_n‖/‖A(u_n) − A(t_n)‖, ξ_n χ_n + τ_n}   if A(u_n) ≠ A(t_n)
+#           = ξ_n χ_n + τ_n                                         otherwise
+#
+# Feasibility: (1/φ) − 1 − φ ζ (1 + ζ) > 0  (paper eq. 3.1).
+# Weak convergence; R-linear if B (set-valued) is strongly monotone.
+#
+# NOTE on τ_n: Paper's Condition (C3) requires Σ τ_n < ∞. The authors' own
+# numerical experiments (Section 5) use τ_n = 1/(n+1), which DIVERGES and
+# thus violates (C3). We default to 1/(n+1) to exactly reproduce their
+# published experiments; pass `τ_seq = n -> 1/(n+1)^2` for the theoretically
+# valid (summable) choice.
+##############################################################################
+
+function get_TanQin2024_params(L::Float64;
+	κ = 0.5, δ = 1.5, ζ = 0.2, φ = 0.7,
+	χ1::Union{Nothing,Float64} = nothing,
+	ξ_seq = n -> 1.0 + 1.0 / (n + 1)^2,
+	τ_seq = n -> 1.0 / (n + 1))
+
+	χ1_val = isnothing(χ1) ? 1.0 : χ1
+	return (
+		κ = κ,
+		δ = δ,
+		ζ = ζ,
+		φ = φ,
+		χ1 = χ1_val,
+		ξ_seq = ξ_seq,
+		τ_seq = τ_seq,
+	)
+end
+
+"""
+Algorithm 3.1 of Tan & Qin (2024).
+"""
+function TanQin2024(problem::Problem;
+	κ = 0.5, δ = 1.5, ζ = 0.2, φ = 0.7,
+	χ1 = 1.0,
+	ξ_seq = n -> 1.0 + 1.0 / (n + 1)^2,
+	τ_seq = n -> 1.0 / (n + 1),
+	tol = 1e-6, maxiter = 10000)::Solution
+
+	Aresolvant, B_op, x0, x1 = problem.Aλ, problem.B, problem.x0, problem.x1
+	_dot, _norm = problem.dot, problem.norm
+	stopping_criterion = problem.stopping
+
+	@assert 0 < κ < 1 "κ must be in (0,1)"
+	@assert 0 < δ < 2 "δ must be in (0,2)"
+	@assert 0 < ζ < 1 "ζ must be in (0,1)"
+	@assert 0 < φ < 1 "φ must be in (0,1)"
+	@assert χ1 > 0 "χ₁ must be positive"
+	feas = (1 / φ) * (1 - φ) - φ * ζ * (1 + ζ)
+	@assert feas > 0 "Feasibility condition (1/φ)(1−φ) − φζ(1+ζ) > 0 violated (got $(round(feas,digits=4)))"
+
+	s_prev = copy(x0)
+	s_curr = copy(x1)
+	χ_curr = χ1
+	n = 1
+	converged = false
+
+	history = Dict{Symbol,Vector{<:Real}}(
+		:dk     => Float64[],
+		:xk     => Float64[],
+		:err    => Float64[],
+		:lambda => Float64[],
+		:eta    => Float64[],
+		:x_norm => Float64[],
+		:wy_norm => Float64[],
+		:t_iter => Float64[],
+	)
+
+	while n <= maxiter
+		t0 = time_ns()
+
+		push!(history[:xk], _norm(s_curr - s_prev))
+		push!(history[:x_norm], _norm(s_curr))
+		push!(history[:lambda], χ_curr)
+
+		# Step 1: inertial extrapolation
+		u_n = s_curr + ζ * (s_curr - s_prev)
+
+		# Step 2: forward-backward (resolvent of B applied to forward step of A)
+		Au_n = B_op(u_n)   # A in paper = B in our codebase
+		t_n = Aresolvant(u_n - χ_curr * Au_n, χ_curr)
+
+		wy = u_n - t_n
+		push!(history[:wy_norm], _norm(wy))
+
+		stop, err = stopping_criterion(wy, tol)
+		push!(history[:err], err)
+		if stop
+			converged = true
+			s_curr = t_n
+			push!(history[:dk], 0.0)
+			push!(history[:eta], 0.0)
+			push!(history[:t_iter], (time_ns() - t0) / 1e9)
+			break
+		end
+
+		# Step 3: correction direction g_n
+		At_n = B_op(t_n)
+		g_n = wy - χ_curr * (Au_n - At_n)
+
+		normg = _norm(g_n)
+		push!(history[:dk], normg)
+
+		θ_n = normg > eps() ? _dot(wy, g_n) / (normg^2) : 0.0
+		push!(history[:eta], θ_n)
+
+		# Step 4: q_n and s_{n+1}
+		q_n = u_n - δ * θ_n * g_n
+		s_next = (1 - φ) * s_curr + φ * q_n
+
+		# Step 5: adaptive χ update
+		A_diff_norm = _norm(Au_n - At_n)
+		ξ_n = ξ_seq(n)
+		τ_n = τ_seq(n)
+		χ_next = if A_diff_norm > eps()
+			min(κ * _norm(wy) / A_diff_norm, ξ_n * χ_curr + τ_n)
+		else
+			ξ_n * χ_curr + τ_n
+		end
+
+		s_prev = s_curr
+		s_curr = s_next
+		χ_curr = χ_next
+		push!(history[:t_iter], (time_ns() - t0) / 1e9)
+		n += 1
+	end
+
+	return Solution{typeof(s_curr)}(;
+		solver = "TanQin2024",
+		problem = problem,
+		solution = s_curr,
+		iterations = n - 1,
+		converged = converged,
+		parameters = Dict(
+			:κ => κ, :δ => δ, :ζ => ζ, :φ => φ, :χ1 => χ1,
+			:ξ_seq => ξ_seq, :τ_seq => τ_seq,
+			:tol => tol, :maxiter => maxiter,
+		),
+		history = history,
+	)
+end
+
+
+##############################################################################
+# ChenMiPCA — Chen, Zhang, Dong (2020), Algorithm 3.1 (Multi-step inertial PCM)
+# "Multi-step inertial proximal contraction algorithms for monotone
+#  variational inclusion problems"
+#
+# Problem: 0 ∈ A(x) + f(x), A maximal monotone, f monotone + L-Lipschitz.
+# In our codebase: f ↔ problem.B,  A ↔ problem.Aλ (resolvent).
+#
+# Update (s-step inertial, here s = 2):
+#   ω_k = x_k + α₁(x_k − x_{k−1}) + α₂(x_{k−1} − x_{k−2})
+#   y_k = J^A_{λ}(ω_k − λ f(ω_k))
+#   d_k = (ω_k − y_k) − λ(f(ω_k) − f(y_k))
+#   β_k = ⟨ω_k − y_k, d_k⟩ / ‖d_k‖²
+#   x_{k+1} = ω_k − γ β_k d_k
+#
+# Constant stepsize λ ∈ (0, 1/L). Weak convergence. Multi-step inertial.
+##############################################################################
+
+function get_ChenMiPCA_params(L::Float64;
+	γ = 1.95, α1 = 0.9, α2 = -0.01,
+	λ0::Union{Nothing,Float64} = nothing)
+
+	λ = isnothing(λ0) ? 1.0 / (1.05 * L) : λ0
+	return (
+		γ = γ,
+		α1 = α1,
+		α2 = α2,
+		λ1 = λ,
+	)
+end
+
+"""
+Algorithm 3.1 of Chen, Zhang, Dong (2020) — 2-step inertial PCM.
+"""
+function ChenMiPCA(problem::Problem;
+	γ = 1.95, α1 = 0.9, α2 = -0.01,
+	λ1 = 0.1,
+	tol = 1e-6, maxiter = 10000)::Solution
+
+	Aresolvant, B_op, x0, x1 = problem.Aλ, problem.B, problem.x0, problem.x1
+	_dot, _norm = problem.dot, problem.norm
+	stopping_criterion = problem.stopping
+
+	@assert 0 < γ < 2 "γ must be in (0,2)"
+	@assert λ1 > 0 "λ must be positive"
+
+	# Paper (Algorithm 3.1) initialization: "Choose x_0 ∈ H, x_{-i-1} = x_0 for
+	# i ∈ S\{0}". This is a SINGLE-POINT initial convention — all prior iterates
+	# equal x_0, so the first inertial extrapolation is zero. We use problem.x0
+	# only (problem.x1 is ignored for Chen). Using x1 here would inject a
+	# spurious α₁·(x1 − x0) term at iteration 1 with α₁=0.9, which blows up on
+	# large-L problems (observed: 0/75 on Example 1 VIP before this fix).
+	x_pp = copy(x0)   # x_{k−2} = x_0
+	x_prev = copy(x0) # x_{k−1} = x_0
+	x_curr = copy(x0) # x_k    = x_0
+	λ = λ1
+	k = 1
+	converged = false
+
+	history = Dict{Symbol,Vector{<:Real}}(
+		:dk     => Float64[],
+		:xk     => Float64[],
+		:err    => Float64[],
+		:lambda => Float64[],
+		:eta    => Float64[],
+		:x_norm => Float64[],
+		:wy_norm => Float64[],
+		:t_iter => Float64[],
+	)
+
+	while k <= maxiter
+		t0 = time_ns()
+
+		push!(history[:xk], _norm(x_curr - x_prev))
+		push!(history[:x_norm], _norm(x_curr))
+		push!(history[:lambda], λ)
+
+		# Step 1: 2-step inertial extrapolation
+		ω_k = x_curr + α1 * (x_curr - x_prev) + α2 * (x_prev - x_pp)
+
+		# Step 2: resolvent + forward step
+		f_ω = B_op(ω_k)
+		y_k = Aresolvant(ω_k - λ * f_ω, λ)
+
+		wy = ω_k - y_k
+		push!(history[:wy_norm], _norm(wy))
+
+		stop, err = stopping_criterion(wy, tol)
+		push!(history[:err], err)
+		if stop
+			converged = true
+			x_curr = y_k
+			push!(history[:dk], 0.0)
+			push!(history[:eta], 0.0)
+			push!(history[:t_iter], (time_ns() - t0) / 1e9)
+			break
+		end
+
+		# Step 3: contraction step
+		f_y = B_op(y_k)
+		d_k = wy - λ * (f_ω - f_y)
+
+		normd = _norm(d_k)
+		push!(history[:dk], normd)
+
+		β_k = normd > eps() ? _dot(wy, d_k) / (normd^2) : 0.0
+		push!(history[:eta], β_k)
+
+		x_next = ω_k - γ * β_k * d_k
+
+		# Shift iterates
+		x_pp = x_prev
+		x_prev = x_curr
+		x_curr = x_next
+
+		push!(history[:t_iter], (time_ns() - t0) / 1e9)
+		k += 1
+	end
+
+	return Solution{typeof(x_curr)}(;
+		solver = "ChenMiPCA",
+		problem = problem,
+		solution = x_curr,
+		iterations = k - 1,
+		converged = converged,
+		parameters = Dict(
+			:γ => γ, :α1 => α1, :α2 => α2, :λ1 => λ1,
+			:tol => tol, :maxiter => maxiter,
+		),
+		history = history,
+	)
+end
+
+
+##############################################################################
+# PeeyadaIMFBSA — Peeyada, Suparatulatorn, Cholamjiak (2022), Algorithm 3.1
+# "An inertial Mann forward-backward splitting algorithm of variational
+#  inclusion problems and its application"
+#
+# Problem: 0 ∈ F(x) + G(x), F is β-COCOERCIVE, G maximal monotone.
+# In our codebase: F ↔ problem.B,  G ↔ problem.Aλ (resolvent).
+#
+# IMPORTANT: Paper requires F β-cocoercive (stronger than monotone+Lipschitz).
+# For our benchmarks where B = ∇((1/2) x^T M x) with M symmetric PSD, B is the
+# gradient of a convex quadratic and thus (1/L)-cocoercive by Baillon–Haddad,
+# so Peeyada's assumptions are satisfied. Document this in the paper's text.
+#
+# Update (inertial + Mann relaxation, simple forward-backward):
+#   y_n = x_n + ξ_n(x_n − x_{n−1})            (inertial, adaptive ξ_n)
+#   z_n = y_n + α_n(x_n − y_n)                 (Mann relaxation)
+#   x_{n+1} = J^G_{γ_n}(z_n − γ_n F(z_n))
+#
+# Paper's adaptive ξ_n (data-classification choice, Section 4):
+#   Δ = ‖x_n − x_{n−1}‖
+#   ξ̃_n = 1/(Δ² + n²)
+#   ξ_n = min(ξ̃_n/Δ, 0.5)  if Δ > 0
+#        = 0.5               if Δ = 0
+# This ensures Σ ξ_n ‖x_n − x_{n−1}‖ < ∞ (paper's summability condition).
+#
+# Paper's defaults: α_n = n/(2n+1), γ_n = 1.999/(2L) ≈ 1/L  (constant).
+# Weak convergence.  Stopping: ‖x_{n+1} − z_n‖ (FB residual).
+##############################################################################
+
+"""
+Default adaptive ξ rule of Peeyada 2022 (data classification, Sec. 4).
+Takes iteration `n` and iterate gap Δ = ‖x_n − x_{n−1}‖.
+"""
+_peeyada_xi_rule(n::Int, Δ::Real) =
+	Δ > eps() ? min(1.0 / (Δ^2 + n^2) / Δ, 0.5) : 0.5
+
+function get_PeeyadaIMFBSA_params(L::Float64;
+	γ_const::Union{Nothing,Float64} = nothing,
+	ξ_rule::Function = _peeyada_xi_rule,
+	α_seq = n -> n / (2n + 1))
+
+	γ_val = isnothing(γ_const) ? 1.999 / (2.0 * L) : γ_const
+	return (
+		γ_const = γ_val,
+		ξ_rule = ξ_rule,
+		α_seq = α_seq,
+	)
+end
+
+"""
+Algorithm 3.1 of Peeyada, Suparatulatorn, Cholamjiak (2022) — inertial Mann
+forward-backward splitting.
+
+`ξ_rule(n, Δ)` is a function of iteration index and iterate gap; default is
+the paper's adaptive rule. Pass e.g. `(n, Δ) -> 1/(n+1)^2` for a simple
+iteration-only rule.
+"""
+function PeeyadaIMFBSA(problem::Problem;
+	γ_const = 0.1,
+	ξ_rule::Function = _peeyada_xi_rule,
+	α_seq = n -> n / (2n + 1),
+	tol = 1e-6, maxiter = 10000)::Solution
+
+	Aresolvant, B_op, x0, x1 = problem.Aλ, problem.B, problem.x0, problem.x1
+	_dot, _norm = problem.dot, problem.norm
+	stopping_criterion = problem.stopping
+
+	@assert γ_const > 0 "γ must be positive"
+
+	x_prev = copy(x0)
+	x_curr = copy(x1)
+	n = 1
+	converged = false
+
+	history = Dict{Symbol,Vector{<:Real}}(
+		:dk     => Float64[],
+		:xk     => Float64[],
+		:err    => Float64[],
+		:lambda => Float64[],
+		:eta    => Float64[],
+		:x_norm => Float64[],
+		:wy_norm => Float64[],
+		:t_iter => Float64[],
+	)
+
+	while n <= maxiter
+		t0 = time_ns()
+
+		Δ = _norm(x_curr - x_prev)
+		push!(history[:xk], Δ)
+		push!(history[:x_norm], _norm(x_curr))
+		push!(history[:lambda], γ_const)
+
+		ξ_n = ξ_rule(n, Δ)
+		α_n = α_seq(n)
+		push!(history[:eta], α_n)   # Mann relaxation coefficient
+
+		# Step 1: inertial
+		y_n = x_curr + ξ_n * (x_curr - x_prev)
+		# Step 2: Mann relaxation
+		z_n = y_n + α_n * (x_curr - y_n)
+		# Step 3: forward-backward
+		F_zn = B_op(z_n)
+		x_next = Aresolvant(z_n - γ_const * F_zn, γ_const)
+
+		# Stopping: x_{n+1} = z_n ⇒ z_n is a fixed point of J^G_γ(I − γF)
+		residual = x_next - z_n
+		push!(history[:wy_norm], _norm(residual))
+		push!(history[:dk], _norm(residual))
+
+		stop, err = stopping_criterion(residual, tol)
+		push!(history[:err], err)
+		if stop
+			converged = true
+			x_curr = x_next
+			push!(history[:t_iter], (time_ns() - t0) / 1e9)
+			break
+		end
+
+		x_prev = x_curr
+		x_curr = x_next
+
+		push!(history[:t_iter], (time_ns() - t0) / 1e9)
+		n += 1
+	end
+
+	return Solution{typeof(x_curr)}(;
+		solver = "PeeyadaIMFBSA",
+		problem = problem,
+		solution = x_curr,
+		iterations = n - 1,
+		converged = converged,
+		parameters = Dict(
+			:γ_const => γ_const, :ξ_rule => ξ_rule, :α_seq => α_seq,
+			:tol => tol, :maxiter => maxiter,
 		),
 		history = history,
 	)

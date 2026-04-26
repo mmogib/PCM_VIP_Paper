@@ -68,7 +68,8 @@ end
 
 # IPCMAS1 params for elastic net (matches paper's Algorithm 1 — constant α, no sequences)
 # NOTE: IPCMAS1 converges very slowly in practice. Will be replaced by DIPCM in Step 5.
-function get_IPCMAS1_params_EN(L::Float64; γ=1.1, μ0=0.5, α0=0.25, β0=0.3, λ0=0.5)
+# β0 default tuned by w11 sensitivity (α=0.30 → β=0.25·β_max ≈ 0.0119, satisfies A4).
+function get_IPCMAS1_params_EN(L::Float64; γ=1.1, μ0=0.5, α0=0.30, β0=0.0119, λ0=0.5)
     a_seq(n) = 100 / (n)^(2)
     θ_seq(n) = 0.9
     return (
@@ -982,10 +983,10 @@ algo_filter = get(opts, "algo", "")
 
 if runwhat in ["all", "runonly"]
     ALL_ALGORITHMS = Dict(
-        "DeyHICPP"    => ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_EN),
-        "SICIP"       => ("SICIP", Suantai2024, L -> get_Suantai2024_params(L)),
-        "IPCMAS1"     => ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params_EN(L; γ=1.1, μ0=0.5, α0=0.25, β0=0.3, λ0=0.05)),
-        "DIPCM"       => ("DIPCM", DIPCM, L -> get_DIPCM_params(L; α0=0.2, β_zn=0.2, θ_bar=0.9, λ0=0.05)),
+        "DeyHICPP"     => ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_EN),
+        "SICIP"        => ("SICIP", Suantai2024, L -> get_Suantai2024_params(L)),
+        "IPCMAS1"      => ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params_EN(L; γ=1.1, μ0=0.5, α0=0.25, β0=0.3, λ0=0.05)),
+        "DIPCM"        => ("DIPCM", DIPCM, L -> get_DIPCM_params(L; β_bar=0.3, θ_bar=0.9, λ0=0.05)),
     )
     default_keys = ["DeyHICPP", "SICIP", "DIPCM"]
 

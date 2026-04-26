@@ -64,6 +64,8 @@ function generate_comparison_table(algorithms::Vector,
     io::IO=stdout,
     resume_file::String="",
     force::Bool=false,
+    save_history::Bool=false,
+    history_dir::String="",
 )
     algorithm_names = first.(algorithms)
     done_set = (isempty(resume_file) || force) ? Set() : load_done_set(resume_file)
@@ -146,6 +148,14 @@ function generate_comparison_table(algorithms::Vector,
                         if !isempty(resume_file)
                             _save_one_row(resume_file, algo_name, n, problem.name, err, time_elapsed, iterations, converged, get(sol.parameters, :λ1, ""))
                         end
+
+                        if save_history && !isempty(history_dir)
+                            try
+                                _save_history_csv(history_dir, algo_name, n, problem.name, err, sol.history; overwrite=force)
+                            catch e
+                                println(io, "\n  WARN: failed to save history for $algo_name ($(problem.name), tol=$err): $e")
+                            end
+                        end
                     catch e
                         println(io, "\n  ERROR: $algo_name on $(problem.name) at tol=$err: $e")
                         iterations = -1
@@ -196,6 +206,55 @@ function _save_one_row(filepath, algo, dim, problem, err, time, iter, converged,
     end
 end
 
+"""
+Slugify a string for safe use in filenames (replace non-alnum with `_`, trim).
+"""
+_slugify(s::AbstractString) = replace(strip(s), r"[^A-Za-z0-9]+" => "_")
+
+"""
+Write per-iteration history to CSV. Aligns all vectors to length of `:err`
+(which is always pushed on every iter, including the terminal break).
+Shorter vectors are padded with NaN; longer vectors are truncated.
+Skips if file already exists.
+
+File path:
+  {history_dir}/{algo}_N{dim}_{problem_slug}_tol{err_sci}.csv
+"""
+function _save_history_csv(history_dir::String, algo::String, dim::Int,
+    problem_name::String, err::Float64, history::Dict{Symbol,Vector{<:Real}};
+    overwrite::Bool=false)
+    mkpath(history_dir)
+    prob_slug = _slugify(problem_name)
+    err_str = @sprintf("%.0e", err)  # e.g. "1e-06"
+    filepath = joinpath(history_dir, "$(algo)_N$(dim)_$(prob_slug)_tol$(err_str).csv")
+    (!overwrite && isfile(filepath)) && return filepath   # resume: skip if exists
+
+    # Determine reference length from :err; fall back to max length among present keys
+    N = haskey(history, :err) ? length(history[:err]) :
+        (isempty(history) ? 0 : maximum(length(v) for v in values(history)))
+    N == 0 && return filepath  # nothing to write
+
+    # Fixed column order; include only keys that are populated
+    preferred = [:err, :xk, :dk, :lambda, :eta, :x_norm, :wy_norm, :t_iter]
+    keys_present = [k for k in preferred if haskey(history, k) && !isempty(history[k])]
+    # Also include any extra keys not in preferred, in sorted order
+    extras = sort([k for k in keys(history) if !(k in preferred) && !isempty(history[k])])
+    cols = vcat(keys_present, extras)
+
+    open(filepath, "w") do f
+        println(f, "iter," * join(string.(cols), ","))
+        for i in 1:N
+            vals = String["$i"]
+            for k in cols
+                v = history[k]
+                push!(vals, i <= length(v) ? string(v[i]) : "NaN")
+            end
+            println(f, join(vals, ","))
+        end
+    end
+    return filepath
+end
+
 function save_comparison_results(results::Vector, filename::String; io::IO=stdout)
     header = [
         (:algo_name, "Algorithm"),
@@ -227,6 +286,7 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
     convergence_dims::Union{Nothing,Vector{Int}}=nothing,
     io::IO=stdout,
     force::Bool=false,
+    save_history::Bool=false,
 )
     println(io, "\n" * "="^70)
     println(io, "$(uppercase(title)): Algorithm Comparison")
@@ -235,6 +295,11 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
 
     title_clean = replace(title, " " => "_")
     resume_csv = prepare_filepath("results/$(title_clean)/comparison_incremental.csv", dated=false)
+    history_dir = save_history ? joinpath("results", title_clean, "history") : ""
+    if save_history
+        mkpath(history_dir)
+        println(io, "  save_history=true → per-iter CSVs → $history_dir")
+    end
 
     results = generate_comparison_table(
         algorithms, example_setup, dims,
@@ -247,6 +312,8 @@ function startSolvingExample(title::String, algorithms::Vector, example_setup, d
         io=io,
         resume_file=resume_csv,
         force=force,
+        save_history=save_history,
+        history_dir=history_dir,
     )
 
     if clearfolder
