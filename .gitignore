@@ -1,8 +1,11 @@
+# Working notes for Mohammed/Claude collaboration; not part of public repo.
+/CLAUDE.md
+
 # Ignore contents of results but keep the folder
 /results/*
 !/results/.gitkeep
 
-# Archive: keep Phase-5 archived files (referenced in README/CLAUDE.md);
+# Archive: keep Phase-5 archived files (referenced in README);
 # ignore older pre-2026 snapshots.
 /archive/algov*.jl
 /archive/example*.jl
