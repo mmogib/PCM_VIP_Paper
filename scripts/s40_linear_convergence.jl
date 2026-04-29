@@ -590,6 +590,7 @@ mkpath("results/linear_convergence")
 # Define algorithms
 algorithms = [
     ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_EN),
+    ("SICIP",    Suantai2024, L -> get_Suantai2024_params(L)),
     ("DIPCM", DIPCM, L -> get_DIPCM_params(L; β_bar=0.3, θ_bar=0.9, λ0=0.05)),
     ("IPCMAS2", IPCMAS2, (L) -> get_IPCMAS2_params(L; γ=1.1, λ0=1 / (1.05 * L)))
 ]
