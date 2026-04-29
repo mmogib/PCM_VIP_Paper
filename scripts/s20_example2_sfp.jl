@@ -252,6 +252,8 @@ function _jit_warmup_sfp()
           tol = 1e-2, maxiter = 1000)
     DeyHICPP(prob; get_DeyHICPP_params_L2(L)..., tol = 1e-2, maxiter = 1000)
     Suantai2024(prob; get_Suantai2024_params(L)..., tol = 1e-2, maxiter = 1000)
+    IPCMAS2(prob; get_IPCMAS2_params(L; γ = 1.1, λ0 = 1 / (1.05 * L))...,
+            tol = 1e-2, maxiter = 1000)
     return nothing
 end
 
@@ -275,9 +277,10 @@ ALL_ALGORITHMS = Dict(
     "DeyHICPP"     => ("DeyHICPP", DeyHICPP, get_DeyHICPP_params_L2),
     "SICIP"        => ("SICIP", Suantai2024, L -> get_Suantai2024_params(L)),
     "IPCMAS1"      => ("IPCMAS1", IPCMAS1, L -> get_IPCMAS1_params_L2(L; γ=1.1, μ0=0.5, α0=0.30, β0=0.0119, λ0=0.05)),
+    "IPCMAS2"      => ("IPCMAS2", IPCMAS2, L -> get_IPCMAS2_params(L; γ=1.1, λ0=1 / (1.05 * L))),
     "DIPCM"        => ("DIPCM", DIPCM, L -> get_DIPCM_params(L; β_bar=0.3, θ_bar=0.9, λ0=0.05)),
 )
-default_keys = ["DeyHICPP", "SICIP", "DIPCM"]
+default_keys = ["DeyHICPP", "SICIP", "IPCMAS2", "DIPCM"]
 
 algo_filter = get(opts, "algo", "")
 if !isempty(algo_filter)
